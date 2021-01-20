@@ -361,17 +361,6 @@ const onEnded$ = compatibleListener(["ended"]);
 const onTimeUpdate$ = compatibleListener(["timeupdate"]);
 
 /**
- * @param {HTMLElement} element
- * @returns {Observable}
- */
-const onFullscreenChange$ = compatibleListener(
-  ["fullscreenchange", "FullscreenChange"],
-
-  // On IE11, fullscreen change events is called MSFullscreenChange
-  BROWSER_PREFIXES.concat("MS")
-);
-
-/**
  * @param {HTMLMediaElement} mediaElement
  * @returns {Observable}
  */
@@ -461,7 +450,6 @@ export {
   onSeeked$,
   onEnded$,
   onTimeUpdate$,
-  onFullscreenChange$,
   onSourceOpen$,
   onSourceClose$,
   onSourceEnded$,
