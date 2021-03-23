@@ -1,0 +1,15 @@
+{
+  "docOrder": [
+    {
+      "fileName": "Getting_Started",
+      "displayName": "Getting Started",
+      "description": "Getting started with the RxPlayer"
+    },
+    {
+      "fileName": "API",
+      "displayName": "API documentation",
+      "description": "RxPlayer API documentation"
+    }
+  ]
+}
+

@@ -1,0 +1,21 @@
+{
+  "docOrder": [
+    {
+      "fileName": "Player_Options.md",
+      "displayName": "Player options",
+      "description": "Player constructor options"
+    },
+    {
+      "fileName": "Basic_Methods.md",
+      "displayName": "Basic methods",
+      "description": "RxPlayer general purpose methods"
+    },
+    {
+      "fileName": "Player_Events.md",
+      "displayName": "Player events",
+      "description": "RxPlayer emitted events"
+    }
+
+  ]
+}
+
