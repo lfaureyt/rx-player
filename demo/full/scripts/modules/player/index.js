@@ -20,7 +20,6 @@ VideoThumbnailLoader.addLoader(DASH_LOADER);
 const PLAYER = ({ $destroy, state }, { videoElement, textTrackElement }) => {
   const player = new RxPlayer({
     limitVideoWidth: false,
-    stopAtEnd: false,
     throttleVideoBitrateWhenHidden: true,
     videoElement,
   });
