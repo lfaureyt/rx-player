@@ -53,16 +53,11 @@ export default class NativeTextSegmentBuffer
 
   /**
    * @param {HTMLMediaElement} videoElement
-   * @param {Boolean} hideNativeSubtitle
    */
-  constructor(
-    videoElement : HTMLMediaElement,
-    hideNativeSubtitle : boolean
-  ) {
+  constructor(videoElement : HTMLMediaElement) {
     log.debug("NTSB: Creating NativeTextSegmentBuffer");
     super();
-    const { track,
-            trackElement } = addTextTrack(videoElement, hideNativeSubtitle);
+    const { track, trackElement } = addTextTrack(videoElement);
 
     this.bufferType = "text";
 
