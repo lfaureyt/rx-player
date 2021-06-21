@@ -14,18 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  Observable,
-  of as observableOf,
-  timer,
-  race as observableRace,
-} from "rxjs";
-import {
-  catchError,
-  mergeMap,
-  take,
-  tap,
-} from "rxjs/operators";
+import PPromise from "pinkie";
 import {
   closeSession,
   ICustomMediaKeySession,
@@ -47,7 +36,7 @@ const { EME_SESSION_CLOSING_MAX_RETRY,
  */
 export default function safelyCloseMediaKeySession(
   mediaKeySession : MediaKeySession | ICustomMediaKeySession
-) : Observable<unknown> {
+) : Promise<unknown> {
   return recursivelyTryToCloseMediaKeySession(0);
 
   /**
@@ -59,43 +48,48 @@ export default function safelyCloseMediaKeySession(
    * @param {number} retryNb - The attempt number starting at 0.
    * @returns {Observable}
    */
-  function recursivelyTryToCloseMediaKeySession(
-    retryNb : number
-  ) : Observable<unknown> {
+  async function recursivelyTryToCloseMediaKeySession(
+    retryNb : number,
+    /// XXX TODO cancellationToken
+  ) : Promise<unknown> {
     log.debug("EME: Trying to close a MediaKeySession", mediaKeySession, retryNb);
-    return closeSession(mediaKeySession).pipe(
-      tap(() => { log.debug("EME: Succeeded to close MediaKeySession"); }),
-      catchError((err : unknown) => {
-        // Unitialized MediaKeySession may not close properly until their
-        // corresponding `generateRequest` or `load` call are handled by the
-        // browser.
-        // In that case the EME specification tells us that the browser is
-        // supposed to reject the `close` call with an InvalidStateError.
-        if (!(err instanceof Error) || err.name !== "InvalidStateError" ||
-            mediaKeySession.sessionId !== "")
-        {
-          return failToCloseSession(err);
-        }
+    try {
+      await closeSession(mediaKeySession);
+      log.debug("EME: Succeeded to close MediaKeySession");
+      return ;
+    } catch (err : unknown) {
+      // Unitialized MediaKeySession may not close properly until their
+      // corresponding `generateRequest` or `load` call are handled by the
+      // browser.
+      // In that case the EME specification tells us that the browser is
+      // supposed to reject the `close` call with an InvalidStateError.
+      if (!(err instanceof Error) || err.name !== "InvalidStateError" ||
+          mediaKeySession.sessionId !== "")
+      {
+        return failToCloseSession(err);
+      }
 
-        // We will retry either:
-        //   - when an event indicates that the MediaKeySession is
-        //     initialized (`callable` is the proper EME term here)
-        //   - after a delay, raising exponentially
-        const nextRetryNb = retryNb + 1;
-        if (nextRetryNb > EME_SESSION_CLOSING_MAX_RETRY) {
-          return failToCloseSession(err);
-        }
-        const delay = Math.min(Math.pow(2, retryNb) * EME_SESSION_CLOSING_INITIAL_DELAY,
-                               EME_SESSION_CLOSING_MAX_DELAY);
-        log.warn("EME: attempt to close a mediaKeySession failed, " +
-                 "scheduling retry...", delay);
-        return observableRace([timer(delay),
-                               onKeyStatusesChange$(mediaKeySession),
-                               onKeyMessage$(mediaKeySession)])
-          .pipe(
-            take(1),
-            mergeMap(() => recursivelyTryToCloseMediaKeySession(nextRetryNb)));
-      }));
+      // We will retry either:
+      //   - when an event indicates that the MediaKeySession is
+      //     initialized (`callable` is the proper EME term here)
+      //   - after a delay, raising exponentially
+      const nextRetryNb = retryNb + 1;
+      if (nextRetryNb > EME_SESSION_CLOSING_MAX_RETRY) {
+        return failToCloseSession(err);
+      }
+      const delay = Math.min(Math.pow(2, retryNb) * EME_SESSION_CLOSING_INITIAL_DELAY,
+                             EME_SESSION_CLOSING_MAX_DELAY);
+      log.warn("EME: attempt to close a mediaKeySession failed, " +
+               "scheduling retry...", delay);
+
+      /// XXX TODO
+      return observableRace([timer(delay),
+                             onKeyStatusesChange$(mediaKeySession),
+                             onKeyMessage$(mediaKeySession)])
+        .pipe(
+          take(1),
+          mergeMap(() => recursivelyTryToCloseMediaKeySession(nextRetryNb)));
+    }));
   }
 
   /**
@@ -104,10 +98,10 @@ export default function safelyCloseMediaKeySession(
    * TODO Emit warning?
    * @returns {Observable}
    */
-  function failToCloseSession(err : unknown) : Observable<null> {
+  function failToCloseSession(err : unknown) : Promise<null> {
     log.error("EME: Could not close MediaKeySession: " +
               (err instanceof Error ? err.toString() :
                                       "Unknown error"));
-    return observableOf(null);
+    return PPromise.resolve(null);
   }
 }

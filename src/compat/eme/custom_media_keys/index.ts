@@ -14,14 +14,8 @@
  * limitations under the License.
  */
 
-import {
-  defer as observableDefer,
-  Observable,
-  of as observableOf,
-  throwError as observableThrow,
-} from "rxjs";
+import PPromise from "pinkie";
 import { MediaError } from "../../../errors";
-import castToObservable from "../../../utils/cast_to_observable";
 import { isIE11 } from "../../browser_detection";
 import isNode from "../../is_node";
 import shouldFavourCustomSafariEME from "../../should_favour_custom_safari_EME";
@@ -45,8 +39,8 @@ import { WebKitMediaKeysConstructor } from "./webkit_media_keys_constructor";
 let requestMediaKeySystemAccess : null |
                                   ((keyType : string,
                                     config : MediaKeySystemConfiguration[])
-                                      => Observable<MediaKeySystemAccess |
-                                                    CustomMediaKeySystemAccess>)
+                                      => Promise<MediaKeySystemAccess |
+                                                 CustomMediaKeySystemAccess>)
                                 = null;
 
 let _setMediaKeys :
@@ -98,11 +92,7 @@ let _setMediaKeys :
 if (isNode ||
     (navigator.requestMediaKeySystemAccess != null && !shouldFavourCustomSafariEME())
 ) {
-  requestMediaKeySystemAccess = (
-    a : string,
-    b : MediaKeySystemConfiguration[]
-  ) : Observable<MediaKeySystemAccess> =>
-    castToObservable(navigator.requestMediaKeySystemAccess(a, b));
+  requestMediaKeySystemAccess = navigator.requestMediaKeySystemAccess.bind(navigator);
 } else {
   let isTypeSupported: (keyType: string) => boolean;
   let createCustomMediaKeys: (keyType: string) => ICustomMediaKeys;
@@ -165,9 +155,9 @@ if (isNode ||
   requestMediaKeySystemAccess = function(
     keyType : string,
     keySystemConfigurations : MediaKeySystemConfiguration[]
-  ) : Observable<MediaKeySystemAccess|CustomMediaKeySystemAccess> {
+  ) : Promise<MediaKeySystemAccess|CustomMediaKeySystemAccess> {
     if (!isTypeSupported(keyType)) {
-      return observableThrow(() => new Error("Unsupported key type"));
+      return PPromise.reject(new Error("Unsupported key type"));
     }
 
     for (let i = 0; i < keySystemConfigurations.length; i++) {
@@ -194,7 +184,7 @@ if (isNode ||
 
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const customMediaKeys = createCustomMediaKeys(keyType);
-        return observableOf(
+        return PPromise.resolve(
           new CustomMediaKeySystemAccess(keyType,
                                          customMediaKeys,
                                          keySystemConfigurationResponse)
@@ -202,7 +192,7 @@ if (isNode ||
       }
     }
 
-    return observableThrow(() => new Error("Unsupported configuration"));
+    return PPromise.reject(new Error("Unsupported configuration"));
   };
 }
 
@@ -211,13 +201,18 @@ if (isNode ||
  * Emits null when done then complete.
  * @param {HTMLMediaElement} elt
  * @param {Object} mediaKeys
- * @returns {Observable}
+ * @returns {Promise}
  */
-function setMediaKeys(
+async function setMediaKeys(
   elt : HTMLMediaElement,
   mediaKeys : MediaKeys|ICustomMediaKeys|null
-) : Observable<unknown> {
-  return observableDefer(() => castToObservable(_setMediaKeys(elt, mediaKeys)));
+) : Promise<void> {
+  try {
+    _setMediaKeys(elt, mediaKeys);
+  } catch (error) {
+    return PPromise.reject(error);
+  }
+  return PPromise.resolve();
 }
 
 export {

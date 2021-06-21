@@ -128,16 +128,16 @@ export default function getMediaKeysInfos(
  * @param {MediaKeySystemAccess} mediaKeySystemAccess
  * @returns {Observable.<MediaKeys>}
  */
-function createMediaKeys(
+async function createMediaKeys(
   mediaKeySystemAccess : MediaKeySystemAccess | ICustomMediaKeySystemAccess
-) : Observable<MediaKeys | ICustomMediaKeys> {
+) : Promise<MediaKeys | ICustomMediaKeys> {
   log.info("EME: Calling createMediaKeys on the MediaKeySystemAccess");
-  return tryCatch(() => castToObservable(mediaKeySystemAccess.createMediaKeys()),
-                  undefined).pipe(
-    catchError((error : unknown) : never => {
-      const message = error instanceof Error ?
-        error.message :
-        "Unknown error when creating MediaKeys.";
-      throw new EncryptedMediaError("CREATE_MEDIA_KEYS_ERROR", message);
-    }));
+  try {
+    const mediaKeys = await mediaKeySystemAccess.createMediaKeys();
+    return mediaKeys;
+  } catch (error) {
+    const message = error instanceof Error ? error.message :
+                                             "Unknown error when creating MediaKeys.";
+    throw new EncryptedMediaError("CREATE_MEDIA_KEYS_ERROR", message);
+  }
 }

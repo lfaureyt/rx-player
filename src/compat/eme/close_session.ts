@@ -14,64 +14,51 @@
  * limitations under the License.
  */
 
-import {
-  Observable,
-  of as observableOf,
-  race as observableRace,
-  timer as observableTimer,
-} from "rxjs";
-import {
-  catchError,
-  map,
-  mergeMap,
-} from "rxjs/operators";
-import castToObservable from "../../utils/cast_to_observable";
+import PPromise from "pinkie";
 import { ICustomMediaKeySession } from "./custom_media_keys";
 
-/**
- * Close session and returns and observable that emits when
+/** Close session and returns and observable that emits when
  * the session is closed.
  * @param {MediaKeySession|Object} session
  * @returns {Observable}
  */
 export default function closeSession$(
   session: MediaKeySession|ICustomMediaKeySession
-): Observable<unknown> {
-  return observableRace(
-    castToObservable(session.close()),
-    // If the session is not closed after 1000ms, try
-    // to call another method on session to guess if
-    // session is closed or not.
-    observableTimer(1000).pipe(
-      mergeMap(() => {
-        const tryToUpdateSession$ = castToObservable(
-          session.update(new Uint8Array(1))
-        );
-        return tryToUpdateSession$.pipe(
-          // Update has resolved, so we can't know if session is closed
-          map(() => { throw new Error("Compat: Couldn't know if session is " +
-                                      "closed"); }),
-          catchError((err : unknown) => {
-            // The caught error can tell if session is closed
-            // (Chrome may throw this error)
-            if (err instanceof Error &&
-                err.message === "The session is already closed."
-            ) {
-              return observableOf(null);
-            }
-            // The `closed` promise may resolve, even if `close()` result has not
-            // (it may happen on Firefox). Wait for it and timeout after 1 second.
-            const sessionIsClosed$ = castToObservable(session.closed);
-            return observableRace(
-              sessionIsClosed$,
-              observableTimer(1000).pipe(
-                map(() => { throw new Error("Compat: Couldn't know if session is " +
-                                            "closed"); })
-              )
-            );
-          })
-        );
-      })
-    )
-  );
+): Promise<unknown> {
+  const closingSessionProm = session.close();
+
+  // If the session is not closed after 1000ms, try
+  // to call another method on session to guess if
+  // session is closed or not.
+  const timeoutProm = new PPromise((resolve) => {
+    setTimeout(() => { onTimeout(); }, 1000);
+    async function onTimeout() {
+      try {
+        await session.update(new Uint8Array(1));
+      } catch (err) {
+        // The caught error can tell if session is closed
+        // (Chrome may throw this error)
+        if (err instanceof Error &&
+            err.message === "The session is already closed."
+        ) {
+          return resolve(undefined);
+        }
+
+        // The `closed` promise may resolve, even if `close()` result has not
+        // (it may happen on Firefox). Wait for it and timeout after 1 second.
+        const sessionIsClosed$ = session.closed;
+        const closeTimeout = new PPromise((_, innerReject) =>
+          setTimeout(() => innerReject(new Error("Compat: Couldn't know if session is " +
+                                                 "closed")),
+                     1000));
+        return PPromise.race([sessionIsClosed$, closeTimeout]);
+      }
+
+      // If we're here, the update has worked
+      throw new Error("Compat: Couldn't know if session is closed");
+    }
+  });
+
+  // XXX TODO better
+  return PPromise.race([closingSessionProm, timeoutProm]);
 }

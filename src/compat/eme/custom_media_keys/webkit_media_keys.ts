@@ -14,14 +14,9 @@
  * limitations under the License.
  */
 
-import {
-  merge as observableMerge,
-  Subject,
-} from "rxjs";
-import { takeUntil } from "rxjs/operators";
 import EventEmitter from "../../../utils/event_emitter";
+import noop from "../../../utils/noop";
 import PPromise from "../../../utils/promise";
-import * as events from "../../event_listeners";
 import getWebKitFairplayInitData from "../get_webkit_fairplay_initdata";
 import {
   ICustomMediaKeys,
@@ -81,16 +76,18 @@ class WebkitMediaKeySession
   extends EventEmitter<IMediaKeySessionEvents>
   implements ICustomMediaKeySession
 {
-  public readonly update: (license: Uint8Array) => Promise<void>;
   public readonly closed: Promise<void>;
   public expiration: number;
   public keyStatuses: ICustomMediaKeyStatusMap;
 
   private readonly _videoElement: HTMLMediaElement;
-  private readonly _closeSession$: Subject<void>;
   private readonly _keyType: string;
   private _nativeSession: undefined | any;
   private _serverCertificate: Uint8Array | undefined;
+
+  private readonly _onEvent : (evt : Event) => void;
+  private _closeSession : () => void;
+  private _unbindSession : () => void;
 
   /**
    * @param {HTMLMediaElement} mediaElement
@@ -104,48 +101,43 @@ class WebkitMediaKeySession
   ) {
     super();
     this._serverCertificate = serverCertificate;
-    this._closeSession$ = new Subject();
     this._videoElement = mediaElement;
     this._keyType = keyType;
 
+    this._unbindSession = noop;
+    this._closeSession = noop; // Just here to make TypeScript happy
     this.closed = new PPromise((resolve) => {
-      this._closeSession$.subscribe(resolve);
+      this._closeSession = resolve;
     });
     this.keyStatuses = new Map();
     this.expiration = NaN;
 
-    this.update = (license: Uint8Array) => {
-      return new PPromise((resolve, reject) => {
-        /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-        if (this._nativeSession === undefined ||
-            this._nativeSession.update === undefined ||
-            typeof this._nativeSession.update !== "function") {
-          return reject("Unavailable WebKit key session.");
-        }
-        try {
-          /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          resolve(this._nativeSession.update(license));
-          /* eslint-enable @typescript-eslint/no-unsafe-member-access */
-        } catch (err) {
-          reject(err);
-        }
-        /* eslint-enable @typescript-eslint/no-unsafe-member-access */
-      });
+    this._onEvent = (evt : Event) => {
+      this.trigger(evt.type, evt);
     };
   }
 
-  listenEvent(session: any) {
-    observableMerge(events.onKeyMessage$(session),
-                    events.onKeyAdded$(session),
-                    events.onKeyError$(session))
-      .pipe(takeUntil(this._closeSession$))
-      .subscribe((evt: Event) => {
-        this.trigger(evt.type, evt);
-      });
+  public update(license: Uint8Array) : Promise<void> {
+    return new PPromise((resolve, reject) => {
+      /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+      if (this._nativeSession === undefined ||
+          this._nativeSession.update === undefined ||
+          typeof this._nativeSession.update !== "function") {
+        return reject("Unavailable WebKit key session.");
+      }
+      try {
+        /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        resolve(this._nativeSession.update(license));
+        /* eslint-enable @typescript-eslint/no-unsafe-member-access */
+      } catch (err) {
+        reject(err);
+      }
+      /* eslint-enable @typescript-eslint/no-unsafe-member-access */
+    });
   }
 
-  generateRequest(
+  public generateRequest(
     _initDataType: string,
     initData: ArrayBuffer
   ): Promise<void> {
@@ -180,17 +172,17 @@ class WebkitMediaKeySession
       if (keySession === undefined || keySession === null) {
         throw new Error("Impossible to get the key sessions");
       }
-      this.listenEvent(keySession);
+      this._listenEvent(keySession);
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       this._nativeSession = keySession;
       resolve();
     });
   }
 
-  close(): Promise<void> {
+  public close(): Promise<void> {
     return new PPromise((resolve, reject) => {
-      this._closeSession$.next();
-      this._closeSession$.complete();
+      this._unbindSession();
+      this._closeSession();
       if (this._nativeSession === undefined) {
         reject("No session to close.");
       }
@@ -217,6 +209,24 @@ class WebkitMediaKeySession
     return this._nativeSession?.sessionId ?? "";
     /* eslint-enable @typescript-eslint/no-unsafe-member-access */
     /* eslint-enable @typescript-eslint/no-unsafe-return */
+  }
+
+  private _listenEvent(session: any) : void {
+    this._unbindSession(); // If previous session was linked
+
+    /* eslint-disable @typescript-eslint/no-unsafe-call */
+    /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+    /* eslint-disable @typescript-eslint/no-unsafe-return */
+    ["keymessage", "message", "keyadded", "ready", "keyerror", "error"]
+      .forEach(evt => session.addEventListener(evt, this._onEvent));
+
+    this._unbindSession = () => {
+      ["keymessage", "message", "keyadded", "ready", "keyerror", "error"]
+        .forEach(evt => session.removeEventListener(evt, this._onEvent));
+    };
+    /* eslint-disable @typescript-eslint/no-unsafe-return */
+    /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+    /* eslint-enable @typescript-eslint/no-unsafe-call */
   }
 }
 
