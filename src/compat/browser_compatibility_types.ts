@@ -59,14 +59,7 @@ interface ICompatTextTrack extends TextTrack {
  * Browser implementation of the `document` object with added optional vendored
  * functions for some "old" browsers.
  */
-interface ICompatDocument extends Document { mozCancelFullScreen? : () => void;
-                                             mozFullScreenElement? : HTMLElement;
-                                             mozHidden? : boolean;
-                                             msExitFullscreen? : () => void;
-                                             webkitExitFullscreen : () => void;
-                                             fullscreenElement : Element | null;
-                                             msFullscreenElement? : Element | null;
-                                             webkitFullscreenElement : Element | null;
+interface ICompatDocument extends Document { mozHidden? : boolean;
                                              msHidden? : boolean;
                                              webkitHidden? : boolean; }
 
