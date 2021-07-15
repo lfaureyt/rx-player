@@ -60,17 +60,10 @@ interface ICompatTextTrack extends TextTrack {
  * functions for some "old" browsers.
  */
 interface ICompatDocument extends Document {
-  fullscreenElement : Element | null;
-  mozCancelFullScreen? : () => void;
-  mozFullScreenElement? : HTMLElement;
   mozHidden? : boolean;
-  msExitFullscreen? : () => void;
-  msFullscreenElement? : Element | null;
   msHidden? : boolean;
-  pictureInPictureElement? : HTMLElement | null | undefined;
-  webkitExitFullscreen : () => void;
-  webkitFullscreenElement : Element | null;
   webkitHidden? : boolean;
+  pictureInPictureElement? : HTMLElement | null | undefined;
 }
 
 /**
