@@ -30,7 +30,6 @@ export {
   // loadVideo arguments:
   ITransportOptions,
   IKeySystemOption,
-  ISupplementaryTextTrackOption,
   ISupplementaryImageTrackOption,
   INetworkConfigOption,
   IStartAtOption,
