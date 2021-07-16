@@ -1110,7 +1110,7 @@ class Player extends EventEmitter<IPublicAPIEvent> {
    * NaN if no video is playing.
    * @returns {Number}
    */
-  getVideoDuration() : number {
+  getMediaDuration() : number {
     if (this.videoElement === null) {
       throw new Error("Disposed player");
     }
