@@ -266,7 +266,7 @@ describe("basic playback use cases: non-linear DASH SegmentTimeline", function (
     expect(player.getCurrentBufferGap()).to.be.below(9);
   });
 
-  it("should continue downloading when seek to wanter buffer ahead", async function() {
+  it("should continue downloading when seek to wanted buffer ahead", async function() {
     player.setWantedBufferAhead(2);
     player.loadVideo({
       transport: manifestInfos.transport,
@@ -274,10 +274,11 @@ describe("basic playback use cases: non-linear DASH SegmentTimeline", function (
     });
     await waitForLoadedStateAfterLoadVideo(player);
     await sleep(100);
-    const videoLoadedTime = player.getCurrentBufferGap();
-    player.seekTo(videoLoadedTime);
+    const lastPositionWithBuffer = player.getMediaElement().buffered.end(0);
+    player.seekTo(lastPositionWithBuffer);
     await sleep(100);
-    expect(player.getCurrentBufferGap()).to.be.above(videoLoadedTime);
+    expect(player.getMediaElement().buffered.end(0))
+      .to.be.above(lastPositionWithBuffer);
     player.play();
     await sleep(100);
     expect(player.getPlayerState()).to.equal("PLAYING");
