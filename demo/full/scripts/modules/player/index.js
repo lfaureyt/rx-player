@@ -46,7 +46,6 @@ const PLAYER = ({ $destroy, state }, { videoElement, textTrackElement }) => {
     error: null,
     hasCurrentContent: false,
     hasEnded: false,
-    images: [],
     isBuffering: false,
     isCatchUpEnabled: false,
     isCatchingUp: false,

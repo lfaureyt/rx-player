@@ -101,10 +101,6 @@ exported:
     To clarify, the ``keySystems`` property in a ``loadVideo`` call is an
     optional array of one or multiple ``IKeySystemOption``.
 
-  - ``ISupplementaryImageTrackOption``: type for an element of the
-    ``supplementaryImageTracks`` array, which is an optional property given to
-    ``loadVideo``.
-
   - ``INetworkConfigOption``: type for the ``networkConfig`` property
     optionally given to ``loadVideo``.
 
