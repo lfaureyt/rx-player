@@ -36,7 +36,6 @@ const config = {
         PORT: "\"3000\"",
       },
       __FEATURES__: {
-        BIF_PARSER: true,
         DASH: true,
         DIRECTFILE: true,
         EME: true,
@@ -55,7 +54,6 @@ const config = {
 
       // Path relative to src/features where optional features are implemented
       __RELATIVE_PATH__: {
-        BIF_PARSER: JSON.stringify("../parsers/images/bif.ts"),
         DASH: JSON.stringify("../transports/dash/index.ts"),
         DASH_JS_PARSER: JSON.stringify("../parsers/manifest/dash/js-parser/index.ts"),
         DIRECTFILE: JSON.stringify("../core/init/initialize_directfile.ts"),
@@ -65,7 +63,6 @@ const config = {
         HTML_TEXT_BUFFER: JSON.stringify("../core/segment_buffers/implementations/text/html/index.ts"),
         HTML_TTML: JSON.stringify("../parsers/texttracks/ttml/html/index.ts"),
         HTML_VTT: JSON.stringify("../parsers/texttracks/webvtt/html/index.ts"),
-        IMAGE_BUFFER: JSON.stringify("../core/segment_buffers/implementations/image/index.ts"),
         LOCAL_MANIFEST: JSON.stringify("../transports/local/index.ts"),
         MEDIA_ELEMENT_TRACK_CHOICE_MANAGER: JSON.stringify("../core/api/media_element_track_choice_manager.ts"),
         METAPLAYLIST: JSON.stringify("../transports/metaplaylist/index.ts"),

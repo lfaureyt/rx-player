@@ -66,7 +66,7 @@ export default function generateCachedSegmentDetector()
     downloadDuration: number
   ): boolean {
     const contentType = content.adaptation.type;
-    if (contentType === "text" || contentType === "image") {
+    if (contentType === "text") {
       return false;
     }
 

@@ -64,7 +64,7 @@ import SegmentInventory, {
  * array.
  */
 export abstract class SegmentBuffer<T> {
-  /** "Type" of the buffer (e.g. "audio", "video", "text", "image"). */
+  /** "Type" of the buffer (e.g. "audio", "video", "text"). */
   public readonly abstract bufferType : IBufferType;
 
   /** Default implementation of an inventory of segment metadata. */
@@ -187,8 +187,7 @@ export abstract class SegmentBuffer<T> {
 /** Every SegmentBuffer types. */
 export type IBufferType = "audio" |
                           "video" |
-                          "text" |
-                          "image";
+                          "text";
 
 /**
  * Content of the `data` property when pushing a new chunk.

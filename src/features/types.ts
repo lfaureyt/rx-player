@@ -55,36 +55,6 @@ export type INativeTextTracksBuffer =
 
 export type IMediaElementTrackChoiceManager = typeof MediaElementTrackChoiceManager;
 
-interface IBifThumbnail { index : number;
-                          duration : number;
-                          ts : number;
-                          data : Uint8Array; }
-
-interface IImageTrackSegmentData {
-  data : IBifThumbnail[]; // image track data, in the given type
-  end : number; // end time time until which the segment apply
-  start : number; // start time from which the segment apply
-  timescale : number; // timescale to convert the start and end into seconds
-  type : string; // the type of the data (example: "bif")
-}
-
-interface IBifObject { fileFormat : string;
-                       version : string;
-                       imageCount : number;
-                       timescale : number;
-                       format : string;
-                       width : number;
-                       height : number;
-                       aspectRatio : string;
-                       isVod : boolean;
-                       thumbs : IBifThumbnail[]; }
-
-export type IImageBuffer =
-  new() => SegmentBuffer<IImageTrackSegmentData>;
-
-export type IImageParser =
-  ((buffer : Uint8Array) => IBifObject);
-
 export type IDashJsParser = (
   document: Document,
   args : IMPDParserArguments
@@ -99,8 +69,6 @@ export interface IFeaturesObject {
   emeManager : IEMEManager|null;
   htmlTextTracksBuffer : IHTMLTextTracksBuffer|null;
   htmlTextTracksParsers : Partial<Record<string, IHTMLTextTracksParserFn>>;
-  imageBuffer : IImageBuffer|null;
-  imageParser : IImageParser|null;
   transports : Partial<Record<string, ITransportFunction>>;
   dashParsers : {
     wasm : DashWasmParser | null;
