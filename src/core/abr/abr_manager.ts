@@ -36,8 +36,6 @@ export type IABRManagerClockTick = IRepresentationEstimatorClockTick;
 interface IRepresentationEstimatorsThrottlers {
   limitWidth : Partial<Record<IBufferType,
                               Observable<number>>>;
-  throttle : Partial<Record<IBufferType,
-                            Observable<number>>>;
   throttleBitrate : Partial<Record<IBufferType,
                                    Observable<number>>>;
 }
@@ -116,8 +114,7 @@ export default class ABRManager {
                                        observableOf(Infinity));
     const initialBitrate = takeFirstSet<number>(this._initialBitrates[type], 0);
     const filters$ = createFilters(this._throttlers.limitWidth[type],
-                                   this._throttlers.throttleBitrate[type],
-                                   this._throttlers.throttle[type]);
+                                   this._throttlers.throttleBitrate[type]);
     return RepresentationEstimator({ bandwidthEstimator,
                                      streamEvents$,
                                      clock$,
