@@ -452,7 +452,7 @@ describe("Manifest - Period", () => {
     jest.mock("../adaptation", () => ({
       __esModule: true as const,
       default: adaptationSpy,
-      SUPPORTED_ADAPTATIONS_TYPE: ["audio", "video", "text", "image"],
+      SUPPORTED_ADAPTATIONS_TYPE: ["audio", "video", "text"],
     }));
 
     const Period = require("../period").default;
