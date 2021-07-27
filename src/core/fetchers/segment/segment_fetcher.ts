@@ -122,7 +122,8 @@ export default function createSegmentFetcher<
                        value: { duration: segment.duration,
                                 time: segment.time,
                                 requestTimestamp: performance.now(),
-                                id } });
+                                id,
+                                content } });
 
       const canceller = new TaskCanceller();
       let hasRequestEnded = false;

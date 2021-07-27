@@ -21,6 +21,7 @@ function generateRepresentationIndex(
   lastPosition : number|undefined|null
 ) : IRepresentationIndex {
   return {
+    // maxSegmentDuration: undefined,
     getInitSegment() { return null; },
     getSegments() { return []; },
     shouldRefresh() { return false; },

@@ -206,6 +206,13 @@ export interface ISegment {
 
 /** Interface that should be implemented by any Representation's `index` value. */
 export interface IRepresentationIndex {
+  // /**
+  //  * The maximum duration in seconds any known segment linked to this
+  //  * Representation has.
+  //  * `undefined` if not known or if it doesn't apply here.
+  //  */
+  // maxSegmentDuration : number | undefined;
+
   /**
    * Returns Segment object for the initialization segment, allowing to do the
    * Init Segment request.

@@ -77,6 +77,12 @@ interface ITimelineIndex {
   media : string;
   /** Contains information about all segments available here. */
   timeline : IIndexSegment[];
+
+  /**
+   * The maximum duration in seconds any known segment in the timeline has.
+   * `undefined` if no segment is known.
+   */
+  // maxSegmentDuration : number | undefined;
 }
 
 /**
@@ -195,6 +201,13 @@ interface ISmoothInitSegmentPrivateInfos {
  */
 export default class SmoothRepresentationIndex implements IRepresentationIndex {
   /**
+   * The maximum duration in seconds any known segment linked to this
+   * RepresentationIndex has.
+   * `undefined` if no segment is available.
+   */
+  // maxSegmentDuration : number | undefined;
+
+  /**
    * Information needed to generate an initialization segment.
    * Taken from the Manifest.
    */
@@ -274,6 +287,7 @@ export default class SmoothRepresentationIndex implements IRepresentationIndex {
       performance.now() :
       options.manifestReceivedTime;
     this._index = index;
+    // this.maxSegmentDuration = index.maxSegmentDuration;
     this._indexValidityTime = estimatedReceivedTime;
     this._timeShiftBufferDepth = timeShiftBufferDepth;
 
@@ -535,10 +549,12 @@ export default class SmoothRepresentationIndex implements IRepresentationIndex {
     const newTimescale = newIndex._index.timescale;
 
     this._index = newIndex._index;
+    // this.maxSegmentDuration = newIndex.maxSegmentDuration;
     this._initialScaledLastPosition = newIndex._initialScaledLastPosition;
     this._indexValidityTime = newIndex._indexValidityTime;
     this._scaledLiveGap = newIndex._scaledLiveGap;
 
+    // XXX TODO update if others are higher
     if (oldTimeline.length === 0 ||
         newTimeline.length === 0 ||
         oldTimescale !== newTimescale)
@@ -596,6 +612,9 @@ export default class SmoothRepresentationIndex implements IRepresentationIndex {
    * @param {Object} newIndex
    */
   _update(newIndex : SmoothRepresentationIndex) : void {
+    // this.maxSegmentDuration = newIndex.maxSegmentDuration;
+
+    // XXX TODO update if others are higher
     updateSegmentTimeline(this._index.timeline, newIndex._index.timeline);
     this._initialScaledLastPosition = newIndex._initialScaledLastPosition;
     this._indexValidityTime = newIndex._indexValidityTime;
@@ -636,7 +655,13 @@ export default class SmoothRepresentationIndex implements IRepresentationIndex {
   ) : void {
     this._refreshTimeline();
     for (let i = 0; i < nextSegments.length; i++) {
-      addSegmentInfos(this._index, nextSegments[i], currentSegment);
+      const nextSegment = nextSegments[i];
+      addSegmentInfos(this._index, nextSegment, currentSegment);
+      // if (this.maxSegmentDuration === undefined ||
+      //     nextSegment.time / nextSegment.timescale > this.maxSegmentDuration)
+      // {
+      //   this.maxSegmentDuration = nextSegment.time / nextSegment.timescale;
+      // }
     }
   }
 

@@ -15,36 +15,83 @@
  */
 
 import log from "../../log";
+import Manifest, {
+  Adaptation,
+  ISegment,
+  Period,
+  Representation,
+} from "../../manifest";
 import objectValues from "../../utils/object_values";
 
+/**
+ * Payload needed to add progress information for a request to the
+ * PendingRequestsStore.
+ */
 export interface IProgressEventValue {
-  duration : number; // current duration for the request, in ms
-  id: string|number; // unique ID for the request
-  size : number; // current downloaded size, in bytes
-  timestamp : number; // timestamp of the progress event since unix epoch, in ms
-  totalSize : number; // total size to download, in bytes
-}
-
-export interface IBeginRequestValue {
+  /** Current duration since the request started, in ms. */
+  duration : number;
+  /** Unique ID identifying the request this progress information is for. */
   id: string|number;
+  /** Current downloaded size, in bytes. */
+  size : number;
+  /** `performance.now()` at the time this progress event was generated. */
+  timestamp : number;
+  /** Total size of the segment to download, in bytes. */
+  totalSize : number;
+}
+
+/** Payload needed to add a request to the PendingRequestsStore. */
+export interface IBeginRequestValue {
+  /**
+   * Unique ID that will identify the request to send it events and remove it
+   * from the PendingRequestsStore.
+   */
+  id: string|number;
+  /** Time at which the corresponding segment begins, in seconds. */
   time: number;
-  duration: number;
+  /** Duration of the corresponding segment being downloaded, in seconds. */
+  duration : number;
+  /** `Performance.now()` corresponding to the time at which the request began. */
   requestTimestamp: number;
+  /** Context associated to the segment. */
+  content: IRequestInfoContent;
 }
 
+/** Information linked to a segment request, stored in the PendingRequestsStore. */
 export interface IRequestInfo {
-  duration : number; // duration of the corresponding chunk, in seconds
-  progress: IProgressEventValue[]; // progress events for this request
-  requestTimestamp: number; // unix timestamp at which the request began, in ms
-  time: number; // time at which the corresponding segment begins, in seconds
+  /** Duration of the corresponding segment being downloaded, in seconds. */
+  duration : number;
+  /** Information on the current progress made by this request. */
+  progress: IProgressEventValue[];
+  /** `Performance.now()` corresponding to the time at which the request began. */
+  requestTimestamp: number;
+  /** Time at which the corresponding segment begins, in seconds. */
+  time: number;
+  /** Context associated to the segment. */
+  content: IRequestInfoContent;
 }
 
+/** Information on the progress made by a request. */
 export interface IProgressEventValue {
-  duration : number; // current duration for the request, in ms
-  id: string|number; // unique ID for the request
-  size : number; // current downloaded size, in bytes
-  timestamp : number; // timestamp of the progress event since unix epoch, in ms
-  totalSize : number; // total size to download, in bytes
+  /** Current duration since the request started, in ms. */
+  duration : number;
+  /** Unique ID identifying the request this progress information is for. */
+  id: string|number;
+  /** Current downloaded size, in bytes. */
+  size : number;
+  /** `performance.now()` at the time this progress event was generated. */
+  timestamp : number;
+  /** Total size of the segment to download, in bytes. */
+  totalSize : number;
+}
+
+/** Content linked to a segment request. */
+export interface IRequestInfoContent {
+  manifest : Manifest;
+  period : Period;
+  adaptation : Adaptation;
+  representation : Representation;
+  segment : ISegment;
 }
 
 /**
@@ -66,11 +113,12 @@ export default class PendingRequestsStore {
    * @param {Object} payload
    */
   public add(payload : IBeginRequestValue) : void {
-    const { id, time, duration, requestTimestamp } = payload;
+    const { id, time, duration, requestTimestamp, content } = payload;
     this._currentRequests[id] = { time,
                                   duration,
                                   requestTimestamp,
-                                  progress: [] };
+                                  progress: [],
+                                  content };
   }
 
   /**

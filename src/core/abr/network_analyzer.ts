@@ -96,7 +96,7 @@ function getConcernedRequests(
  * @param {Object} request
  * @returns {number|undefined}
  */
-function estimateRequestBandwidth(request : IRequestInfo) : number|undefined {
+export function estimateRequestBandwidth(request : IRequestInfo) : number|undefined {
   if (request.progress.length < 5) { // threshold from which we can consider
                                      // progress events reliably
     return undefined;

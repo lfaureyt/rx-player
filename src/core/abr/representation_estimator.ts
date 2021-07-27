@@ -36,15 +36,21 @@ import {
   ISegment,
   Representation,
 } from "../../manifest";
+import arrayFindIndex from "../../utils/array_find_index";
 import { getLeftSizeOfRange } from "../../utils/ranges";
 import BandwidthEstimator from "./bandwidth_estimator";
 import BufferBasedChooser from "./buffer_based_chooser";
 import generateCachedSegmentDetector from "./cached_segment_detector";
 import filterByBitrate from "./filter_by_bitrate";
 import filterByWidth from "./filter_by_width";
-import NetworkAnalyzer from "./network_analyzer";
-import PendingRequestsStore from "./pending_requests_store";
-import RepresentationScoreCalculator from "./representation_score_calculator";
+import NetworkAnalyzer, {
+  estimateRequestBandwidth,
+} from "./network_analyzer";
+import PendingRequestsStore, {
+  IBeginRequestValue,
+  IProgressEventValue,
+} from "./pending_requests_store";
+import RepresentationScoreCalculator, {ScoreConfidenceLevel} from "./representation_score_calculator";
 import selectOptimalRepresentation from "./select_optimal_representation";
 
 /**
@@ -128,6 +134,12 @@ export interface IRepresentationEstimatorClockTick {
   speed : number;
   /** `duration` property of the HTMLMediaElement on which the content plays. */
   duration : number;
+  /**
+   * For live contents only, difference between the maximum playable position
+   * and the current position.
+   * `undefined` for non-live contents.
+   */
+  liveGap? : number;
 }
 
 /** Content of the `IABRMetricsEvent` event's payload. */
@@ -174,24 +186,7 @@ export interface IABRRepresentationChangeEvent {
  */
 export interface IABRRequestBeginEvent {
   type: "requestBegin";
-  value: {
-    /**
-     * String identifying this request.
-     *
-     * Only one request communicated to the current `RepresentationEstimator`
-     * should have this `id` at the same time.
-     */
-    id: string;
-    /** Presentation time at which the corresponding segment begins, in seconds. */
-    time: number;
-    /**
-     * Difference between the presentation end time and start time of the
-     * corresponding segment, in seconds.
-     */
-    duration: number;
-    /** Value of `performance.now` at the time the request began.  */
-    requestTimestamp: number;
-  };
+  value: IBeginRequestValue;
 }
 
 /**
@@ -202,24 +197,7 @@ export interface IABRRequestBeginEvent {
  */
 export interface IABRRequestProgressEvent {
   type: "progress";
-  value: {
-    /** Amount of time since the request has started, in seconds. */
-    duration : number;
-    /**
-     * Same `id` value used to identify that request at the time the corresponding
-     * `IABRRequestBeginEvent` event was sent.
-     */
-    id: string;
-    /** Current downloaded size, in bytes. */
-    size : number;
-    /** Value of `performance.now` at the time this progression report was available. */
-    timestamp : number;
-    /**
-     * Total size of the segment to download (including already-loaded data),
-     * in bytes.
-     */
-    totalSize : number;
-  };
+  value: IProgressEventValue;
 }
 
 /**
@@ -386,6 +364,23 @@ function getFilteredRepresentations(
   return _representations;
 }
 
+function getSuperiorRepresentation(
+  representations : Representation[],
+  currentRepresentation : Representation
+) : Representation | null {
+  const len = representations.length;
+  const index = arrayFindIndex(representations,
+                               ({ id }) => id === currentRepresentation.id);
+  if (index < 0) {
+    // XXX TODO log.error?
+    return null;
+  } else if (index === len - 1) {
+    return null;
+  } else {
+    return representations[index + 1];
+  }
+}
+
 /**
  * Estimate regularly the current network bandwidth and the best Representation
  * that can be played according to the current network and playback conditions.
@@ -433,13 +428,15 @@ export default function RepresentationEstimator({
     // calculate bandwidth
     bandwidthEstimator.addSample(duration, size);
 
-    // calculate "maintainability score"
     const { segment } = content;
-    const requestDuration = duration / 1000;
-    const segmentDuration = segment.duration;
+    if (!segment.isInit) {
+      // calculate "maintainability score"
+      const requestDuration = duration / 1000;
+      const segmentDuration = segment.duration;
 
-    const { representation } = content;
-    scoreCalculator.addSample(representation, requestDuration, segmentDuration);
+      const { representation } = content;
+      scoreCalculator.addSample(representation, requestDuration, segmentDuration);
+    }
   }
 
   const metrics$ = streamEvents$.pipe(
@@ -498,8 +495,13 @@ export default function RepresentationEstimator({
       }
 
       // -- AUTO mode --
-      let lastEstimatedBitrate : number | undefined;
-      let forceBandwidthMode = true;
+
+      /** Store the previous estimate made here. */
+      const prevEstimate = new EstimateStorage();
+
+      let allowBufferBasedEstimates = false;
+      let blockGuessingModeUntil = 0;
+      let consecutiveWrongGuesses = 0;
 
       // Emit each time a buffer-based estimation should be actualized (each
       // time a segment is added).
@@ -510,7 +512,8 @@ export default function RepresentationEstimator({
           const timeRanges = evtValue.buffered;
           const bufferGap = getLeftSizeOfRange(timeRanges, position);
           const { representation } = evtValue.content;
-          const currentScore = scoreCalculator.getEstimate(representation);
+          const scoreData = scoreCalculator.getEstimate(representation);
+          const currentScore = scoreData?.[0];
           const currentBitrate = representation.bitrate;
           return { bufferGap, currentBitrate, currentScore, speed };
         })
@@ -530,6 +533,7 @@ export default function RepresentationEstimator({
         map(([ [ clock, minAutoBitrate, maxAutoBitrate, filters, bufferBasedBitrate ],
                currentRepresentation ]
         ) : IABREstimate => {
+          const { bufferGap, speed } = clock;
           const _representations = getFilteredRepresentations(representations,
                                                               filters);
           const requests = requestsStore.getRequests();
@@ -538,43 +542,200 @@ export default function RepresentationEstimator({
                                   bandwidthEstimator,
                                   currentRepresentation,
                                   requests,
-                                  lastEstimatedBitrate);
-
-          lastEstimatedBitrate = bandwidthEstimate;
+                                  prevEstimate.bandwidth);
 
           const stableRepresentation = scoreCalculator.getLastStableRepresentation();
-          const knownStableBitrate = stableRepresentation == null ?
+          const knownStableBitrate = stableRepresentation === null ?
             undefined :
             stableRepresentation.bitrate / (clock.speed > 0 ? clock.speed : 1);
 
-          const { bufferGap } = clock;
-          if (!forceBandwidthMode && bufferGap <= 5) {
-            forceBandwidthMode = true;
-          } else if (forceBandwidthMode && isFinite(bufferGap) && bufferGap > 10) {
-            forceBandwidthMode = false;
+          if (allowBufferBasedEstimates && bufferGap <= 5) {
+            allowBufferBasedEstimates = false;
+          } else if (!allowBufferBasedEstimates &&
+                     isFinite(bufferGap) &&
+                      bufferGap > 10)
+          {
+            allowBufferBasedEstimates = true;
           }
 
+          /**
+           * Representation chosen when considering only [pessimist] bandwidth
+           * calculation.
+           * This is a safe enough choice but might be lower than what the user
+           * could actually profit from.
+           */
           const chosenRepFromBandwidth = selectOptimalRepresentation(_representations,
                                                                      bitrateChosen,
                                                                      minAutoBitrate,
                                                                      maxAutoBitrate);
-          if (forceBandwidthMode) {
-            log.debug("ABR: Choosing representation with bandwidth estimation.",
-                      chosenRepFromBandwidth);
-            return { bitrate: bandwidthEstimate,
-                     representation: chosenRepFromBandwidth,
-                     urgent: networkAnalyzer.isUrgent(chosenRepFromBandwidth.bitrate,
-                                                      currentRepresentation,
-                                                      requests,
-                                                      clock),
-                     manual: false,
-                     knownStableBitrate };
-          }
-          if (bufferBasedBitrate == null ||
-              chosenRepFromBandwidth.bitrate >= bufferBasedBitrate)
+
+          /**
+           * Representation chosen when considering the current buffer size.
+           * If defined, takes precedence over `chosenRepFromBandwidth`.
+           *
+           * This is a very safe choice, yet it is very slow and might not be
+           * adapted to cases where a buffer cannot be build, such as live contents.
+           *
+           * `null` if this buffer size mode is not enabled or if we don't have a
+           * choice from it yet.
+           */
+          const chosenRepFromBufferSize =
+            allowBufferBasedEstimates &&
+            bufferBasedBitrate !== undefined &&
+            chosenRepFromBandwidth.bitrate < bufferBasedBitrate ?
+              selectOptimalRepresentation(_representations,
+                                          bufferBasedBitrate,
+                                          minAutoBitrate,
+                                          maxAutoBitrate) :
+              null;
+
+          /**
+           * Representation chosen by the more adventurous "guessing mode", which
+           * iterate through Representations one by one until finding one that
+           * cannot be "maintained".
+           * If defined, takes precedence over both `chosenRepFromBandwidth` and
+           * `chosenRepFromBufferSize`.
+           *
+           * This is the riskiest choice (in terms of rebuffering chances) but is
+           * only enabled when the real risk is low and the reward is high!
+           *
+           * `null` if guessing mode is not enabled or if we're already
+           * considering the best Representation.
+           */
+          let chosenRepFromGuessMode : Representation | null = null;
+
+          const prevRep = prevEstimate.representation;
+          if (clock.liveGap === undefined || clock.liveGap > 50) {
+            // We're not live or far from the live edge, no need to take any risk
+            chosenRepFromGuessMode = null;
+          } else if (currentRepresentation === null || prevRep === null) {
+            // There's nothing to base our guess on
+            chosenRepFromGuessMode = null;
+          } else if (chosenRepFromBufferSize !== null &&
+                     chosenRepFromBufferSize.bitrate > prevRep.bitrate)
           {
+            // Buffer-based estimates are already superior or equal to the guess
+            // we'll be doing here, so no need to guess
+            chosenRepFromGuessMode = null;
+          } else if (prevEstimate.wasGuessed) {
+            // We're currently in guessing mode
+
+            // First check if the other estimates validate the guess
+            if (chosenRepFromBufferSize?.bitrate === prevRep.bitrate) {
+              log.debug("ABR: Guessed Representation validated by buffer-based logic",
+                        prevRep.bitrate);
+              consecutiveWrongGuesses = 0;
+            } else if (chosenRepFromBandwidth.bitrate >= prevRep.bitrate) {
+              log.debug("ABR: Guessed Representation validated by bandwidth-based logic",
+                        prevRep.bitrate);
+              consecutiveWrongGuesses = 0;
+            } else if (currentRepresentation.id === prevRep.id) {
+              let stayInGuessMode = true;
+
+              const guessedRepresentationRequests = requests.filter(req => {
+                return req.content.representation.id === currentRepresentation.id;
+              });
+
+              const now = performance.now();
+              for (let i = 0; i < guessedRepresentationRequests.length; i++) {
+                const req = guessedRepresentationRequests[i];
+                const requestElapsedTime = now - req.requestTimestamp;
+                if (req.content.segment.isInit) {
+                  if (requestElapsedTime > 1000) {
+                    stayInGuessMode = false;
+                    break;
+                  }
+                } else if (requestElapsedTime > req.duration * 1000) {
+                  stayInGuessMode = false;
+                  break;
+                } else {
+                  const fastBw = estimateRequestBandwidth(req);
+                  if (fastBw !== undefined && fastBw < currentRepresentation.bitrate) {
+                    stayInGuessMode = false;
+                    break;
+                  }
+                }
+              }
+
+              const scoreData = scoreCalculator.getEstimate(currentRepresentation);
+              if (stayInGuessMode && (scoreData === undefined || scoreData[0] > 1.2)) {
+                // continue with the guess
+                // console.error("Continuing", scoreData?.[0]);
+                chosenRepFromGuessMode = currentRepresentation;
+              } else {
+                // console.error("BLOCKING!!!!!!!!!!!!!!",
+                //               scoreData?.[0],
+                //               stayInGuessMode);
+                // Block guesses for 2 minutes
+                consecutiveWrongGuesses++;
+                blockGuessingModeUntil = performance.now() +
+                  Math.min(consecutiveWrongGuesses * 120000, 360000);
+              }
+            } else {
+              const scoreData = scoreCalculator.getEstimate(currentRepresentation);
+              if (scoreData !== undefined) {
+                const [representationScore, confidenceLevel] = scoreData;
+                const enableGuessingMode = isFinite(bufferGap) && bufferGap >= 6 &&
+                  performance.now() > blockGuessingModeUntil &&
+                  confidenceLevel === ScoreConfidenceLevel.HIGH &&
+                  representationScore / speed >= 1.4;
+                if (enableGuessingMode) {
+                  const nextRepresentation = getSuperiorRepresentation(
+                    _representations,
+                    currentRepresentation
+                  );
+                  if (nextRepresentation !== null) {
+                    chosenRepFromGuessMode = nextRepresentation;
+                  }
+                }
+              }
+            }
+          } else if (currentRepresentation !== null) {
+            const scoreData = scoreCalculator.getEstimate(currentRepresentation);
+            if (scoreData !== undefined) {
+              const [representationScore, confidenceLevel] = scoreData;
+              const enableGuessingMode = isFinite(bufferGap) && bufferGap >= 6 &&
+                performance.now() > blockGuessingModeUntil &&
+                confidenceLevel === ScoreConfidenceLevel.HIGH &&
+                representationScore / speed >= 1.4;
+              if (enableGuessingMode) {
+                const nextRepresentation = getSuperiorRepresentation(
+                  _representations,
+                  currentRepresentation
+                );
+                if (nextRepresentation !== null) {
+                  // console.error("GUESSING!!!!!!!!!!!!!!");
+                  chosenRepFromGuessMode = nextRepresentation;
+                }
+              }
+            }
+          }
+
+          if (chosenRepFromGuessMode !== null) {
+            log.debug("ABR: Choosing representation with guess-based estimation.",
+                      chosenRepFromGuessMode);
+            prevEstimate.store(chosenRepFromGuessMode, bandwidthEstimate, true);
+            return { bitrate: bandwidthEstimate,
+                     representation: chosenRepFromGuessMode,
+                     urgent: false,
+                     manual: false,
+                     knownStableBitrate };
+          } else if (chosenRepFromBufferSize !== null) {
+            log.debug("ABR: Choosing representation with buffer-based estimation.",
+                      chosenRepFromBufferSize);
+            prevEstimate.store(chosenRepFromBufferSize, bandwidthEstimate, false);
+            return { bitrate: bandwidthEstimate,
+                     representation: chosenRepFromBufferSize,
+                     urgent: networkAnalyzer.isUrgent(chosenRepFromBufferSize.bitrate,
+                                                      currentRepresentation,
+                                                      requests,
+                                                      clock),
+                     manual: false,
+                     knownStableBitrate };
+          } else {
             log.debug("ABR: Choosing representation with bandwidth estimation.",
                       chosenRepFromBandwidth);
+            prevEstimate.store(chosenRepFromBandwidth, bandwidthEstimate, false);
             return { bitrate: bandwidthEstimate,
                      representation: chosenRepFromBandwidth,
                      urgent: networkAnalyzer.isUrgent(chosenRepFromBandwidth.bitrate,
@@ -584,26 +745,37 @@ export default function RepresentationEstimator({
                      manual: false,
                      knownStableBitrate };
           }
-          const chosenRepresentation = selectOptimalRepresentation(_representations,
-                                                                   bufferBasedBitrate,
-                                                                   minAutoBitrate,
-                                                                   maxAutoBitrate);
-          if (bufferBasedBitrate <= maxAutoBitrate) {
-            log.debug("ABR: Choosing representation with buffer based bitrate ceiling.",
-                      chosenRepresentation);
-          }
-          return { bitrate: bandwidthEstimate,
-                   representation: chosenRepresentation,
-                   urgent: networkAnalyzer.isUrgent(bufferBasedBitrate,
-                                                    currentRepresentation,
-                                                    requests,
-                                                    clock),
-                   manual: false,
-                   knownStableBitrate };
         })
       );
     }));
   });
 
   return observableMerge(metrics$, requests$, estimate$);
+}
+
+/** Stores the last estimate made by the estimator */
+class EstimateStorage {
+  public bandwidth : number | undefined;
+  public representation : Representation | null;
+  public wasGuessed : boolean;
+  // public estimateMode : "none" | /* no estimate have been made yet. */
+  //                       "bandwidth" | /* bandwidth-based estimate */
+  //                       "buffer" | /* buffer-based estimate */
+  //                       "guess"; /* guess-based estimate */
+
+  constructor() {
+    this.bandwidth = undefined;
+    this.representation = null;
+    this.wasGuessed = false;
+  }
+
+  public store(
+    representation : Representation,
+    bandwidth : number | undefined,
+    wasGuessed : boolean
+  ) {
+    this.representation = representation;
+    this.bandwidth = bandwidth;
+    this.wasGuessed = wasGuessed;
+  }
 }
