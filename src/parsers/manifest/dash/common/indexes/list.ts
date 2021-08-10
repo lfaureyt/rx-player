@@ -296,6 +296,10 @@ export default class ListRepresentationIndex implements IRepresentationIndex {
     return true;
   }
 
+  initialize() : void {
+    log.error("A `ListRepresentationIndex` does not need to be initialized");
+  }
+
   /**
    * @param {Object} newIndex
    */
@@ -303,10 +307,7 @@ export default class ListRepresentationIndex implements IRepresentationIndex {
     this._index = newIndex._index;
   }
 
-  /**
-   * @param {Object} newIndex
-   */
   _update() : void {
-    log.error("List RepresentationIndex: Cannot update a SegmentList");
+    log.error("A `ListRepresentationIndex` cannot be updated");
   }
 }

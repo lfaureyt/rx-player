@@ -104,7 +104,7 @@ export default function createSegmentFetcher<
   return function fetchSegment(
     content : ISegmentLoaderContent
   ) : Observable<ISegmentFetcherEvent<TSegmentDataType>> {
-    const { segment } = content;
+    const { segment, adaptation, representation, manifest, period } = content;
     return new Observable((obs) => {
       // Retrieve from cache if it exists
       const cached = cache !== undefined ? cache.get(content) :
@@ -156,6 +156,16 @@ export default function createSegmentFetcher<
         },
       };
 
+      /** Segment context given to the transport pipelines. */
+      const context = { segment,
+                        type: adaptation.type,
+                        language: adaptation.language,
+                        isLive: manifest.isLive,
+                        periodStart: period.start,
+                        periodEnd: period.end,
+                        mimeType: representation.mimeType,
+                        codecs: representation.codec,
+                        manifestPublishTime: manifest.publishTime };
 
       tryURLsWithBackoff(segment.mediaURLs ?? [null],
                          callLoaderWithUrl,
@@ -223,7 +233,7 @@ export default function createSegmentFetcher<
         url : string | null,
         cancellationSignal: CancellationSignal
       ) {
-        return loadSegment(url, content, cancellationSignal, loaderCallbacks);
+        return loadSegment(url, context, cancellationSignal, loaderCallbacks);
       }
 
       /**
@@ -240,7 +250,7 @@ export default function createSegmentFetcher<
           const loaded = { data, isChunked };
 
           try {
-            return parseSegment(loaded, content, initTimescale);
+            return parseSegment(loaded, context, initTimescale);
           } catch (error) {
             throw formatError(error, { defaultCode: "PIPELINE_PARSE_ERROR",
                                        defaultReason: "Unknown parsing error" });

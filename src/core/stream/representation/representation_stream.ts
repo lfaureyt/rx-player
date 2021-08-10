@@ -223,7 +223,7 @@ export default function RepresentationStream<TSegmentDataType>({
                           null =
     initSegment === null ? { segmentType: "init",
                              initializationData: null,
-                             protectionDataUpdate: false,
+                             protectionData: [],
                              initTimescale: undefined } :
                            null;
 
@@ -505,37 +505,41 @@ export default function RepresentationStream<TSegmentDataType>({
                  IStreamManifestMightBeOutOfSync>
   {
     const parsed = evt.payload;
-    if (parsed.segmentType === "init") {
-      initSegmentObject = parsed;
 
-      // Now that the initialization segment has been parsed - which may have
-      // included encryption information - take care of the encryption event
-      // if not already done.
-      const allEncryptionData = representation.getAllEncryptionData();
-      const initEncEvt$ = !hasSentEncryptionData &&
-                          allEncryptionData.length > 0 ?
-        observableOf(...allEncryptionData.map(p =>
-          EVENTS.encryptionDataEncountered(p))) :
-        EMPTY;
+    // Supplementary encryption information might have been parsed.
+    for (const protInfo of parsed.protectionData) {
+      // TODO better handle use cases like key rotation by not always grouping
+      // every protection data together? To check.
+      representation.addProtectionData(protInfo.initDataType, protInfo.initData);
+    }
+
+    let segmentEncryptionEvent$ : Observable<IEncryptionDataEncounteredEvent> = EMPTY;
+    if (!hasSentEncryptionData) {
+      const protData = representation.getAllEncryptionData().map(p =>
+        EVENTS.encryptionDataEncountered(p));
+      if (protData.length > 0) {
+        segmentEncryptionEvent$ = observableOf(...protData);
+        hasSentEncryptionData = true;
+      }
+    }
+
+    if (parsed.segmentType === "init") {
+      if (!representation.index.isInitialized() &&
+          parsed.segmentList !== undefined)
+      {
+        representation.index.initialize(parsed.segmentList);
+      }
+      initSegmentObject = parsed;
       const pushEvent$ = pushInitSegment({ clock$,
                                            content,
                                            segment: evt.segment,
                                            segmentData: parsed.initializationData,
                                            segmentBuffer });
-      return observableMerge(initEncEvt$, pushEvent$);
+      return observableMerge(segmentEncryptionEvent$, pushEvent$);
     } else {
       const initSegmentData = initSegmentObject?.initializationData ?? null;
       const { inbandEvents,
-              needsManifestRefresh,
-              protectionDataUpdate } = parsed;
-
-      // TODO better handle use cases like key rotation by not always grouping
-      // every protection data together? To check.
-      const segmentEncryptionEvent$ = protectionDataUpdate &&
-                                     !hasSentEncryptionData ?
-        observableOf(...representation.getAllEncryptionData().map(p =>
-          EVENTS.encryptionDataEncountered(p))) :
-        EMPTY;
+              needsManifestRefresh } = parsed;
 
       const manifestRefresh$ =  needsManifestRefresh === true ?
         observableOf(EVENTS.needsManifestRefresh()) :
@@ -546,7 +550,7 @@ export default function RepresentationStream<TSegmentDataType>({
                        value: inbandEvents }) :
         EMPTY;
 
-      return observableConcat(segmentEncryptionEvent$,
+      return observableConcat(segmentEncryptionEvent$ ?? EMPTY,
                               manifestRefresh$,
                               inbandEvents$,
                               pushMediaSegment({ clock$,

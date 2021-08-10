@@ -25,7 +25,6 @@ import Manifest, {
 import Period from "./period";
 import Representation from "./representation";
 import {
-  IBaseContentInfos,
   IMetaPlaylistPrivateInfos,
   IRepresentationIndex,
   ISegment,
@@ -45,7 +44,6 @@ export {
 
   // types
   IAdaptationType,
-  IBaseContentInfos,
   IManifestParsingOptions,
   IMetaPlaylistPrivateInfos,
   IRepresentationFilter,
