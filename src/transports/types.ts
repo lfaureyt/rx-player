@@ -695,7 +695,7 @@ export interface ISegmentParserParsedInitSegment<DataType> {
    * This might then be used to communicate it to the corresponding
    * `RepresentationIndex`.
    */
-  segmentList? : IIndexSegmentListItem[];
+  segmentList? : ISegmentInformation[];
 }
 
 /**
@@ -743,6 +743,14 @@ export interface ISegmentParserParsedSegment<DataType> {
    * Empty array if no such information was found.
    */
   protectionData : IProtectionDataInfo[];
+  /**
+   * Some segments might contain information about segments coming after them.
+   * Those are called "predicted segments".
+   *
+   * If set, this array will contain the list of segment predicted to come just
+   * after this segment.
+   */
+  predictedSegments? : ISegmentInformation[];
 }
 
 /** Format of protection data found in a segment/chunk. */
@@ -771,7 +779,7 @@ export interface IProtectionDataInfo {
  * This type describes the information obtained on a single segment when the
  * initialization segment has been parsed.
  */
-export interface IIndexSegmentListItem {
+export interface ISegmentInformation {
   /** This segment start time, timescaled. */
   time : number;
   /** This segment difference between its end and start time, timescaled. */

@@ -539,7 +539,11 @@ export default function RepresentationStream<TSegmentDataType>({
     } else {
       const initSegmentData = initSegmentObject?.initializationData ?? null;
       const { inbandEvents,
+              predictedSegments,
               needsManifestRefresh } = parsed;
+      if (predictedSegments !== undefined) {
+        representation.index.addPredictedSegments(predictedSegments, evt.segment);
+      }
 
       const manifestRefresh$ =  needsManifestRefresh === true ?
         observableOf(EVENTS.needsManifestRefresh()) :
