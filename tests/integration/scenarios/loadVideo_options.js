@@ -430,7 +430,7 @@ describe("loadVideo Options", () => {
         numberOfTimeCustomManifestLoaderWasCalled = 0;
       });
 
-      const customManifestLoader = (url, callbacks) => {
+      const customManifestLoader = ({ url }, callbacks) => {
         numberOfTimeCustomManifestLoaderWasCalled++;
         const xhr = new XMLHttpRequest();
         const sendingTime = Date.now();

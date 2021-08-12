@@ -434,7 +434,7 @@ export interface ITransportOptions {
 }
 
 export type CustomSegmentLoader = (
-  // first argument: infos on the segment
+  // first argument: information on the segment
   args : ICustomSegmentLoaderSegmentContext,
 
   // second argument: callbacks
@@ -492,8 +492,8 @@ export interface ICustomSegmentLoaderSegmentContext {
 }
 
 export type CustomManifestLoader = (
-  // first argument: url of the manifest
-  url : string | undefined,
+  // first argument: information on the Manifest
+  args : ICustomManifestLoaderContextInfo,
 
   // second argument: callbacks
   callbacks : { resolve : (args : { data : ILoadedManifestFormat;
@@ -508,6 +508,10 @@ export type CustomManifestLoader = (
 ) =>
   // returns either the aborting callback or nothing
   (() => void)|void;
+
+export interface ICustomManifestLoaderContextInfo {
+  url : string | undefined;
+}
 
 /** Context given to a segment loader and parser. */
 export interface ISegmentContext {
