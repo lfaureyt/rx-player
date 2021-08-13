@@ -15,10 +15,7 @@
  */
 
 import { IInitializationDataInfo } from "../core/eme";
-import {
-  ICustomError,
-  MediaError,
-} from "../errors";
+import { ICustomError } from "../errors";
 import { IParsedManifest } from "../parsers/manifest";
 import areArraysOfNumbersEqual from "../utils/are_arrays_of_numbers_equal";
 import arrayFind from "../utils/array_find";
