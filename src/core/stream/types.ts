@@ -100,7 +100,7 @@ export interface IStreamStatusEvent {
     hasFinishedLoading : boolean;
     /**
      * Segments that will be scheduled for download to fill the buffer until
-     * the buffer goal (first element of that list might already be ).
+     * the buffer goal (first element of that list might already be loading).
      */
     neededSegments : IQueuedSegment[];
     /** Position in the content in seconds from which this status was done.  */
@@ -476,6 +476,7 @@ export type IMultiplePeriodStreamsEvent = IPeriodStreamClearedEvent |
 export type IStreamOrchestratorEvent = IActivePeriodChangedEvent |
                                        IEndOfStreamEvent |
                                        IResumeStreamEvent |
+                                       IStreamWarningEvent |
 
                                        IPeriodStreamClearedEvent |
                                        ICompletedStreamEvent |
@@ -484,11 +485,11 @@ export type IStreamOrchestratorEvent = IActivePeriodChangedEvent |
 
                                        IPeriodStreamReadyEvent |
                                        IAdaptationChangeEvent |
+                                       INeedsMediaSourceReload |
 
                                        // From an AdaptationStream
 
                                        IBitrateEstimationChangeEvent |
-                                       INeedsMediaSourceReload |
                                        INeedsBufferFlush |
                                        INeedsDecipherabilityFlush |
                                        IRepresentationChangeEvent |
@@ -500,5 +501,4 @@ export type IStreamOrchestratorEvent = IActivePeriodChangedEvent |
                                        IEncryptionDataEncounteredEvent |
                                        IStreamManifestMightBeOutOfSync |
                                        IStreamNeedsManifestRefresh |
-                                       IStreamWarningEvent |
                                        IInbandEventsEvent;

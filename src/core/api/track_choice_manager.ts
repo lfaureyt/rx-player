@@ -28,11 +28,14 @@ import {
 } from "../../manifest";
 import { IHDRInformation } from "../../manifest/types";
 import arrayFind from "../../utils/array_find";
-import arrayIncludes from "../../utils/array_includes";
-import isNullOrUndefined from "../../utils/is_null_or_undefined";
-import normalizeLanguage from "../../utils/languages";
-import SortedList from "../../utils/sorted_list";
+import assert from "../../utils/assert";
 import takeFirstSet from "../../utils/take_first_set";
+
+export interface IExposedPeriod {
+  start : number;
+  end : number | undefined;
+  id : string;
+}
 
 /** Single preference for an audio track Adaptation. */
 export type IAudioTrackPreference = null |
@@ -110,76 +113,91 @@ export interface ITMTextTrackListItem
 export interface ITMVideoTrackListItem
   extends ITMVideoTrack { active : boolean }
 
-/** Audio information stored for a single Period. */
-interface ITMPeriodAudioInfos { adaptations : Adaptation[];
-                                adaptation$ : Subject<Adaptation|null>; }
-
-/** Text information stored for a single Period. */
-interface ITMPeriodTextInfos { adaptations : Adaptation[];
-                               adaptation$ : Subject<Adaptation|null>; }
-
-/** Video information stored for a single Period. */
-interface ITMPeriodVideoInfos { adaptations : Adaptation[];
-                                adaptation$ : Subject<Adaptation|null>; }
-
 /** Every information stored for a single Period. */
-interface ITMPeriodInfos { period : Period;
-                           audio? : ITMPeriodAudioInfos;
-                           text? : ITMPeriodTextInfos;
-                           video? : ITMPeriodVideoInfos; }
+interface ITMPeriodInfos {
+  /** The Period in question. */
+  period : Period;
+  /**
+   * If `true`, this Period was present at the last `updatePeriodList` call,
+   * meaning it's probably still in the Manifest.
+   *
+   * If `false`, this Period was not. In that case it is probably just here
+   * because some audio/video/text buffer still contains data of the given type.
+   */
+  inManifest : boolean;
+  audio : IAudioPeriodInfo;
+  text : ITextPeriodInfo;
+  video : IVideoPeriodInfo;
 
-/** Audio track preference once normalized by the TrackChoiceManager. */
-type INormalizedPreferredAudioTrack = null |
-                                      INormalizedPreferredAudioTrackObject;
-
-/** Audio track preference when it is not set to `null`. */
-interface INormalizedPreferredAudioTrackObject {
-  normalized? : string;
-  audioDescription? : boolean;
-  codec? : { all: boolean;
-             test: RegExp; };
+  isRemoved : boolean;
 }
 
-/** Text track preference once normalized by the TrackChoiceManager. */
-type INormalizedPreferredTextTrack = null |
-                                     INormalizedPreferredTextTrackObject;
-
-/** Text track preference when it is not set to `null`. */
-interface INormalizedPreferredTextTrackObject {
-  normalized : string;
-  closedCaption : boolean;
+export interface IAudioPeriodInfo {
+  /** The audio track wanted. */
+  wantedTrack : Adaptation | null;
+  /**
+   * Last `wantedTrack` emitted through `subject`.
+   * This value is mutated just before `subject` is "nexted" whereas
+   * `wantedTrack` is updated as soon as we know which track is wanted.
+   *
+   * Having both `wantedTrack` and `lastEmittedTrack` allows to detect if some
+   * potential side-effects already led to the "nexting" of `subject` with the
+   * last `wantedTrack`, preventing the the `TrackChoiceManager` from doing it
+   * again.
+   */
+  lastEmittedTrack : Adaptation | null | undefined;
+  /** Subject through which the wanted track will be emitted.*/
+  subject : Subject<Adaptation | null> |
+            undefined;
 }
 
-/**
- * Transform an array of IAudioTrackPreference into an array of
- * INormalizedPreferredAudioTrack to be exploited by the TrackChoiceManager.
- * @param {Array.<Object|null>}
- * @returns {Array.<Object|null>}
- */
-function normalizeAudioTracks(
-  tracks : IAudioTrackPreference[]
-) : INormalizedPreferredAudioTrack[] {
-  return tracks.map(t => t === null ?
-    t :
-    { normalized: t.language === undefined ? undefined :
-                                             normalizeLanguage(t.language),
-      audioDescription: t.audioDescription,
-      codec: t.codec });
+export interface ITextPeriodInfo {
+  /** The text track wanted. */
+  wantedTrack : Adaptation | null;
+  /**
+   * Last `wantedTrack` emitted through `subject`.
+   * This value is mutated just before `subject` is "nexted" whereas
+   * `wantedTrack` is updated as soon as we know which track is wanted.
+   *
+   * Having both `wantedTrack` and `lastEmittedTrack` allows to detect if some
+   * potential side-effects already led to the "nexting" of `subject` with the
+   * last `wantedTrack`, preventing the the `TrackChoiceManager` from doing it
+   * again.
+   */
+  lastEmittedTrack : Adaptation | null | undefined;
+  /** Subject through which the wanted track will be emitted.*/
+  subject : Subject<Adaptation | null> |
+            undefined;
 }
 
-/**
- * Transform an array of ITextTrackPreference into an array of
- * INormalizedPreferredTextTrack to be exploited by the TrackChoiceManager.
- * @param {Array.<Object|null>} tracks
- * @returns {Array.<Object|null>}
- */
-function normalizeTextTracks(
-  tracks : ITextTrackPreference[]
-) : INormalizedPreferredTextTrack[] {
-  return tracks.map(t => t === null ?
-    t :
-    { normalized: normalizeLanguage(t.language),
-      closedCaption: t.closedCaption });
+export interface IVideoPeriodInfo {
+  /**
+   * The "base" Adaptation for `wantedTrack` (if a trickmode track was chosen,
+   * this is the Adaptation the trickmode track is linked to, and not the
+   * trickmode track itself).
+   */
+  wantedTrackBase : Adaptation | null;
+  /**
+   * The wanted Adaptation itself (may be different from `wantedTrackBase`
+   * when a trickmode track is chosen, in which case `wantedTrackBase` is
+   * the Adaptation the trickmode track is linked to and `wantedTrack` is the
+   * trickmode track).
+   */
+  wantedTrack : Adaptation | null;
+  /**
+   * Last `wantedTrack` emitted through `subject`.
+   * This value is mutated just before `subject` is "nexted" whereas
+   * `wantedTrack` is updated as soon as we know which track is wanted.
+   *
+   * Having both `wantedTrack` and `lastEmittedTrack` allows to detect if some
+   * potential side-effects already led to the "nexting" of `subject` with the
+   * last `wantedTrack`, preventing the the `TrackChoiceManager` from doing it
+   * again.
+   */
+  lastEmittedTrack : Adaptation | null | undefined;
+  /** Subject through which the wanted track will be emitted.*/
+  subject : Subject<Adaptation | null> |
+            undefined;
 }
 
 /**
@@ -189,56 +207,10 @@ function normalizeTextTracks(
  */
 export default class TrackChoiceManager {
   /**
-   * Current Periods considered by the TrackChoiceManager.
-   * Sorted by start time ascending
+   * Store track selection information, per Period.
+   * Sorted by Period's start time ascending
    */
-  private _periods : SortedList<ITMPeriodInfos>;
-
-  /**
-   * Array of preferred settings for audio tracks.
-   * Sorted by order of preference descending.
-   */
-  private _preferredAudioTracks : IAudioTrackPreference[];
-
-  /**
-   * Array of preferred languages for text tracks.
-   * Sorted by order of preference descending.
-   */
-  private _preferredTextTracks : ITextTrackPreference[];
-
-  /**
-   * Array of preferred settings for video tracks.
-   * Sorted by order of preference descending.
-   */
-  private _preferredVideoTracks : IVideoTrackPreference[];
-
-  /** Memorization of the previously-chosen audio Adaptation for each Period. */
-  private _audioChoiceMemory : WeakMap<Period, Adaptation|null>;
-
-  /** Memorization of the previously-chosen text Adaptation for each Period. */
-  private _textChoiceMemory : WeakMap<Period, Adaptation|null>;
-
-  /** Memorization of the previously-chosen video Adaptation for each Period. */
-  private _videoChoiceMemory : WeakMap<
-    Period,
-    {
-      /**
-       * The "base" Adaptation (if a trickmode track was chosen, this is the
-       * Adaptation the trickmode track is linked to, and not the trickmode
-       * track itself).
-       */
-      baseAdaptation : Adaptation;
-      /**
-       * The chosen Adaptation itself (may be different from `baseAdaptation`
-       * when a trickmode track is chosen, in which case `baseAdaptation` is
-       * the Adaptation the trickmode track is linked to and `adaptation` is the
-       * trickmode track).
-       */
-      adaptation : Adaptation;
-    } |
-    /** Set to `null` when no video track was chosen. */
-    null
-  >;
+  private _store : ITMPeriodInfos[];
 
   /** Tells if trick mode has been enabled by the RxPlayer user */
   public trickModeTrackEnabled: boolean;
@@ -246,94 +218,215 @@ export default class TrackChoiceManager {
   constructor(
     args : { preferTrickModeTracks: boolean }
   ) {
-    this._periods = new SortedList((a, b) => a.period.start - b.period.start);
-
-    this._audioChoiceMemory = new WeakMap();
-    this._textChoiceMemory = new WeakMap();
-    this._videoChoiceMemory = new WeakMap();
-
-    this._preferredAudioTracks = [];
-    this._preferredTextTracks = [];
-    this._preferredVideoTracks = [];
+    this._store = [];
     this.trickModeTrackEnabled = args.preferTrickModeTracks;
   }
 
   /**
-   * Set the list of preferred audio tracks, in preference order.
-   * @param {Array.<Object>} preferredAudioTracks
-   * @param {boolean} shouldApply - `true` if those preferences should be
-   * applied on the currently loaded Period. `false` if it should only
-   * be applied to new content.
+   * Return Array of Period information, to allow an outside application to
+   * modify the track of any Period.
+   * @returns {Array.<Object>}
    */
-  public setPreferredAudioTracks(
-    preferredAudioTracks : IAudioTrackPreference[],
-    shouldApply : boolean
-  ) : void {
-    this._preferredAudioTracks = preferredAudioTracks;
-    if (shouldApply) {
-      this._applyAudioPreferences();
+  public getAvailablePeriods() : IExposedPeriod[] {
+    return this._store.map(p => {
+      return { start: p.period.start,
+               end: p.period.end,
+               id: p.period.id };
+    });
+  }
+
+  private generatePeriodInfo(
+    period : Period,
+    inManifest : boolean
+  ) : ITMPeriodInfos {
+    const audioAdaptation = period.getSupportedAdaptations("audio")[0] ?? null;
+    const textAdaptation = period.getSupportedAdaptations("text")[0] ?? null;
+    const baseVideoAdaptation = period.getSupportedAdaptations("video")[0] ?? null;
+    const videoAdaptation = getRightVideoTrack(baseVideoAdaptation,
+                                               this.trickModeTrackEnabled);
+    return { period,
+             inManifest,
+             isRemoved: false,
+             audio: { wantedTrack: audioAdaptation,
+                      lastEmittedTrack: undefined,
+                      subject: undefined },
+             video: { wantedTrack: videoAdaptation,
+                      wantedTrackBase: baseVideoAdaptation,
+                      lastEmittedTrack: undefined,
+                      subject: undefined },
+             text: { wantedTrack: textAdaptation,
+                     lastEmittedTrack: undefined,
+                     subject: undefined } };
+  }
+
+  /**
+   * Update the list of Periods handled by the TrackChoiceManager and make a
+   * track choice decision for each of them.
+   * @param {Array.<Object>} periods - The list of available periods,
+   * chronologically.
+   */
+  public updatePeriodList(periods : Period[]) : void {
+    // We assume that they are always sorted chronologically
+    if (__DEV__) {
+      for (let i = 1; i < periods.length; i++) {
+        assert(periods[i - 1].start <= periods[i].start);
+      }
+    }
+
+    // XXX TODO smarter Period eviction (keep not-so-old Periods?)
+
+    /** Periods which have just been added. */
+    const addedPeriods : ITMPeriodInfos[] = [];
+
+    /** Tracks we have to update due to the previous one not being available anymore */
+    const updatedTracks : Array<IAudioPeriodInfo |
+                                ITextPeriodInfo |
+                                IVideoPeriodInfo> = [];
+    let newPListIdx = 0;
+    for (let i = 0; i < this._store.length; i++) {
+      const oldPeriod = this._store[i].period;
+      const newPeriod = periods[newPListIdx];
+      if (newPeriod === undefined) {
+        // We reached the end of the new Periods, remove remaining old Periods
+        for (let j = this._store.length - 1; j >= i; j--) {
+          this._store[j].inManifest = false;
+          if (isPeriodItemRemovable(this._store[j])) {
+            this._store[j].isRemoved = true;
+            this._store.splice(j, 1);
+          }
+        }
+      } else if (oldPeriod === newPeriod) {
+        // TODO Also check ID and replace in that case?
+        newPListIdx++;
+
+        const oldTextAdaptation = this._store[i].text.wantedTrack;
+        if (oldTextAdaptation !== null) {
+          const textAdaptations = newPeriod.getSupportedAdaptations("text");
+          const stillHere = textAdaptations.some(a => a.id === oldTextAdaptation.id);
+          if (!stillHere) {
+            log.warn("TrackChoiceManager: Chosen text Adaptation not available anymore");
+            const periodItem = this._store[i].text;
+            periodItem.wantedTrack = textAdaptations[0] ?? null;
+            updatedTracks.push(periodItem);
+          }
+        }
+        const oldVideoAdaptation = this._store[i].video.wantedTrack;
+        if (oldVideoAdaptation !== null) {
+          const videoAdaptations = newPeriod.getSupportedAdaptations("video");
+          const stillHere = videoAdaptations.some(a => a.id === oldVideoAdaptation.id);
+          if (!stillHere) {
+            log.warn("TrackChoiceManager: Chosen video Adaptation not available anymore");
+            const periodItem = this._store[i].video;
+            const chosenBaseTrack = videoAdaptations[0] ?? null;
+            periodItem.wantedTrackBase = chosenBaseTrack;
+            if (chosenBaseTrack === null) {
+              periodItem.wantedTrack = null;
+            } else {
+              periodItem.wantedTrack = getRightVideoTrack(chosenBaseTrack,
+                                                          this.trickModeTrackEnabled);
+
+            }
+            updatedTracks.push(periodItem);
+          }
+        }
+        const oldAudioAdaptation = this._store[i].audio.wantedTrack;
+        if (oldAudioAdaptation !== null) {
+          const audioAdaptations = newPeriod.getSupportedAdaptations("audio");
+          const stillHere = audioAdaptations.some(a => a.id === oldAudioAdaptation.id);
+          if (!stillHere) {
+            log.warn("TrackChoiceManager: Chosen audio Adaptation not available anymore");
+            const periodItem = this._store[i].audio;
+            periodItem.wantedTrack = audioAdaptations[0] ?? null;
+            updatedTracks.push(periodItem);
+          }
+        }
+        // (If not, what do?)
+      } else if (oldPeriod.start <= newPeriod.start) {
+        // This old Period does not exist anymore.
+        this._store[i].inManifest = false;
+        if (isPeriodItemRemovable(this._store[i])) {
+          this._store[i].isRemoved = true;
+          this._store.splice(i, 1);
+          i--;
+        }
+      } else {
+        const newPeriodInfo = this.generatePeriodInfo(newPeriod, true);
+        // oldPeriod.start > newPeriod.start: insert newPeriod before
+        this._store.splice(i, 0, newPeriodInfo);
+        addedPeriods.push(newPeriodInfo);
+        newPListIdx++;
+        // Note: we don't increment `i` on purpose here, as we want to check the
+        // same oldPeriod at the next loop iteration
+      }
+    }
+
+    if (newPListIdx < periods.length) {
+      // Add further new Period
+      const periodsToAdd = periods.slice(newPListIdx)
+        .map(p => this.generatePeriodInfo(p, true));
+      this._store.push(...periodsToAdd);
+      addedPeriods.push(...periodsToAdd);
+    }
+
+    if (updatedTracks.length > 0) {
+      for (const track of  updatedTracks) {
+        if (track.subject !== undefined && track.lastEmittedTrack !== track.wantedTrack) {
+          track.lastEmittedTrack = track.wantedTrack;
+          track.subject.next(track.wantedTrack);
+        }
+      }
+    }
+
+    for (const periodItem of addedPeriods) {
+      if (!periodItem.isRemoved) {
+        // XXX TODO emit newAvailablePeriod
+      }
     }
   }
 
   /**
-   * Set the list of preferred text tracks, in preference order.
-   * @param {Array.<Object>} preferredTextTracks
-   * @param {boolean} shouldApply - `true` if those preferences should be
-   * applied on the currently loaded Periods. `false` if it should only
-   * be applied to new content.
+   * @param {Period} period
+   * @returns {Object}
    */
-  public setPreferredTextTracks(
-    preferredTextTracks : ITextTrackPreference[],
-    shouldApply : boolean
-  ) : void {
-    this._preferredTextTracks = preferredTextTracks;
-    if (shouldApply) {
-      this._applyTextPreferences();
+  private _insertNonManifestPeriodInStore(period : Period) : ITMPeriodInfos {
+    const periodInfo = this.generatePeriodInfo(period, false);
+    for (let i = 0; i < this._store.length; i++) {
+      if (this._store[i].period.start > period.start) {
+        this._store.splice(i, 0, periodInfo);
+        return periodInfo;
+      }
     }
-  }
-
-  /**
-   * Set the list of preferred text tracks, in preference order.
-   * @param {Array.<Object>} tracks
-   * @param {boolean} shouldApply - `true` if those preferences should be
-   * applied on the currently loaded Period. `false` if it should only
-   * be applied to new content.
-   */
-  public setPreferredVideoTracks(
-    preferredVideoTracks : IVideoTrackPreference[],
-    shouldApply : boolean
-  ) : void {
-    this._preferredVideoTracks = preferredVideoTracks;
-    if (shouldApply) {
-      this._applyVideoPreferences();
-    }
+    this._store.push(periodInfo);
+    return periodInfo;
   }
 
   /**
    * Add Subject to choose Adaptation for new "audio" or "text" Period.
    * @param {string} bufferType - The concerned buffer type
    * @param {Period} period - The concerned Period.
-   * @param {Subject.<Object|null>} adaptation$ - A subject through which the
+   * @param {Subject.<Object|null>} subject - A subject through which the
    * choice will be given
    */
-  public addPeriod(
+  public addTrackChoiceSubject(
     bufferType : "audio" | "text"| "video",
     period : Period,
-    adaptation$ : Subject<Adaptation|null>
+    subject : Subject<Adaptation|null>
   ) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const adaptations = period.getSupportedAdaptations(bufferType);
-    if (periodItem !== undefined) {
-      if (periodItem[bufferType] !== undefined) {
-        log.warn(`TrackChoiceManager: ${bufferType} already added for period`, period);
-        return;
-      } else {
-        periodItem[bufferType] = { adaptations, adaptation$ };
-      }
+    let periodItem = getPeriodItem(this._store, period.id);
+    if (periodItem === undefined) { // The Period has not yet been added.
+      periodItem = this._insertNonManifestPeriodInStore(period);
+      // XXX TODO emit newAvailablePeriod
+    } else if (periodItem[bufferType].subject !== undefined) {
+      log.error(`TrackChoiceManager: Subject already added for ${bufferType} ` +
+                `and Period ${period.id}`);
+      return;
     } else {
-      this._periods.add({ period,
-                          [bufferType]: { adaptations, adaptation$ } });
+      periodItem[bufferType].subject = subject;
     }
+
+    const choice = periodItem[bufferType].wantedTrack;
+    periodItem[bufferType].lastEmittedTrack = choice;
+    subject.next(choice);
   }
 
   /**
@@ -342,306 +435,225 @@ export default class TrackChoiceManager {
    * @param {string} bufferType - The concerned buffer type
    * @param {Period} period - The concerned Period.
    */
-  public removePeriod(
+  public removeTrackChoiceSubject(
     bufferType : "audio" | "text" | "video",
     period : Period
   ) : void {
-    const periodIndex = findPeriodIndex(this._periods, period);
+    const periodIndex = findPeriodIndex(this._store, period);
     if (periodIndex === undefined) {
-      log.warn(`TrackChoiceManager: ${bufferType} not found for period`, period);
+      log.warn(`TrackChoiceManager: ${bufferType} not found for period ${period.id}`);
       return;
     }
 
-    const periodItem = this._periods.get(periodIndex);
-    if (periodItem[bufferType] === undefined) {
-      log.warn(`TrackChoiceManager: ${bufferType} already removed for period`, period);
-      return;
-    }
-    delete periodItem[bufferType];
-    if (periodItem.audio === undefined &&
-        periodItem.text === undefined &&
-        periodItem.video === undefined)
-    {
-      this._periods.removeElement(periodItem);
-    }
-  }
-
-  public resetPeriods() : void {
-    while (this._periods.length() > 0) {
-      this._periods.pop();
-    }
-  }
-
-  /**
-   * Update the choice of all added Periods based on:
-   *   1. What was the last chosen adaptation
-   *   2. If not found, the preferences
-   */
-  public update() : void {
-    this._resetChosenAudioTracks();
-    this._resetChosenTextTracks();
-    this._resetChosenVideoTracks();
-  }
-
-  /**
-   * Emit initial audio Adaptation through the given Subject based on:
-   *   - the preferred audio tracks
-   *   - the last choice for this period, if one
-   * @param {Period} period - The concerned Period.
-   */
-  public setInitialAudioTrack(period : Period) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const audioInfos = periodItem !== undefined ? periodItem.audio :
-                                                  null;
-    if (isNullOrUndefined(audioInfos) || periodItem === undefined) {
-      throw new Error("TrackChoiceManager: Given Period not found.");
-    }
-
-    const audioAdaptations = period.getSupportedAdaptations("audio");
-    const chosenAudioAdaptation = this._audioChoiceMemory.get(period);
-
-    if (chosenAudioAdaptation === null) {
-      // If the Period was previously without audio, keep it that way
-      audioInfos.adaptation$.next(null);
-    } else if (chosenAudioAdaptation === undefined ||
-               !arrayIncludes(audioAdaptations, chosenAudioAdaptation)
-    ) {
-      // Find the optimal audio Adaptation
-      const preferredAudioTracks = this._preferredAudioTracks;
-      const normalizedPref = normalizeAudioTracks(preferredAudioTracks);
-      const optimalAdaptation = findFirstOptimalAudioAdaptation(audioAdaptations,
-                                                                normalizedPref);
-
-      this._audioChoiceMemory.set(period, optimalAdaptation);
-      audioInfos.adaptation$.next(optimalAdaptation);
-    } else {
-      audioInfos.adaptation$.next(chosenAudioAdaptation); // set last one
-    }
-  }
-
-  /**
-   * Emit initial text Adaptation through the given Subject based on:
-   *   - the preferred text tracks
-   *   - the last choice for this period, if one
-   * @param {Period} period - The concerned Period.
-   */
-  public setInitialTextTrack(period : Period) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const textInfos = periodItem !== undefined ? periodItem.text :
-                                                 null;
-    if (isNullOrUndefined(textInfos) || periodItem === undefined) {
-      throw new Error("TrackChoiceManager: Given Period not found.");
-    }
-
-    const textAdaptations = period.getSupportedAdaptations("text");
-    const chosenTextAdaptation = this._textChoiceMemory.get(period);
-    if (chosenTextAdaptation === null) {
-      // If the Period was previously without text, keep it that way
-      textInfos.adaptation$.next(null);
-    } else if (chosenTextAdaptation === undefined ||
-               !arrayIncludes(textAdaptations, chosenTextAdaptation)
-    ) {
-      // Find the optimal text Adaptation
-      const preferredTextTracks = this._preferredTextTracks;
-      const normalizedPref = normalizeTextTracks(preferredTextTracks);
-      const optimalAdaptation = findFirstOptimalTextAdaptation(textAdaptations,
-                                                               normalizedPref);
-      this._textChoiceMemory.set(period, optimalAdaptation);
-      textInfos.adaptation$.next(optimalAdaptation);
-    } else {
-      textInfos.adaptation$.next(chosenTextAdaptation); // set last one
-    }
-  }
-
-  /**
-   * Emit initial video Adaptation through the given Subject based on:
-   *   - the preferred video tracks
-   *   - the last choice for this period, if one
-   * @param {Period} period - The concerned Period.
-   */
-  public setInitialVideoTrack(period : Period) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const videoInfos = periodItem !== undefined ? periodItem.video :
-                                                 null;
-    if (isNullOrUndefined(videoInfos) || periodItem === undefined) {
-      throw new Error("TrackChoiceManager: Given Period not found.");
-    }
-
-    const videoAdaptations = period.getSupportedAdaptations("video");
-
-    const prevVideoAdaptation = this._videoChoiceMemory.get(period);
-    let newBaseAdaptation : Adaptation | null;
-
-    if (prevVideoAdaptation === null) {
-      newBaseAdaptation = null;
-    } else if (prevVideoAdaptation !== undefined &&
-               arrayIncludes(videoAdaptations, prevVideoAdaptation.baseAdaptation))
-    {
-      // still exists, re-select it
-      newBaseAdaptation = prevVideoAdaptation.baseAdaptation;
-    } else {
-      // If that Adaptation does not exist (e.g. no choice has been made or it
-      // is not in the Manifest anymore), look at preferences
-      const preferredVideoTracks = this._preferredVideoTracks;
-      newBaseAdaptation = findFirstOptimalVideoAdaptation(videoAdaptations,
-                                                          preferredVideoTracks);
-    }
-
-    if (newBaseAdaptation === null) {
-      this._videoChoiceMemory.set(period, null);
-      videoInfos.adaptation$.next(null);
+    const periodItem = this._store[periodIndex];
+    const choiceItem = periodItem[bufferType];
+    if (choiceItem?.subject === undefined) {
+      log.warn(`TrackChoiceManager: Subject already removed for ${bufferType} ` +
+               `and Period ${period.id}`);
       return;
     }
 
-    const newVideoAdaptation = getRightVideoTrack(newBaseAdaptation,
-                                                  this.trickModeTrackEnabled);
-    this._videoChoiceMemory.set(period, { baseAdaptation: newBaseAdaptation,
-                                          adaptation: newVideoAdaptation });
-    videoInfos.adaptation$.next(newVideoAdaptation);
+    choiceItem.subject = undefined;
+    choiceItem.lastEmittedTrack = undefined;
+
+    if (isPeriodItemRemovable(periodItem)) {
+      this._store.splice(periodIndex, 1);
+    }
+  }
+
+  public resetSubjects() : void {
+    for (let i = 0; i < this._store.length; i++) {
+      this._store[i].audio.subject = undefined;
+      this._store[i].video.subject = undefined;
+      this._store[i].text.subject = undefined;
+    }
   }
 
   /**
    * Set audio track based on the ID of its adaptation for a given added Period.
-   * @param {Period} period - The concerned Period.
+   * @param {string} periodId - The concerned Period's id.
    * @param {string} wantedId - adaptation id of the wanted track
    */
-  public setAudioTrackByID(period : Period, wantedId : string) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const audioInfos = periodItem !== undefined ? periodItem.audio :
-                                                  null;
-    if (isNullOrUndefined(audioInfos)) {
-      throw new Error("TrackChoiceManager: Given Period not found.");
-    }
-
-    const wantedAdaptation = arrayFind(audioInfos.adaptations,
-                                       ({ id }) => id === wantedId);
-
-    if (wantedAdaptation === undefined) {
-      throw new Error("Audio Track not found.");
-    }
-    const chosenAudioAdaptation = this._audioChoiceMemory.get(period);
-    if (chosenAudioAdaptation === wantedAdaptation) {
-      return;
-    }
-
-    this._audioChoiceMemory.set(period, wantedAdaptation);
-    audioInfos.adaptation$.next(wantedAdaptation);
+  public setAudioTrackByID(periodId : string, wantedId : string) : void {
+    return this._setTrackById(periodId, "audio", wantedId);
   }
 
   /**
    * Set text track based on the ID of its adaptation for a given added Period.
-   * @param {Period} period - The concerned Period.
+   * @param {string} periodId - The concerned Period's id.
    * @param {string} wantedId - adaptation id of the wanted track
    */
-  public setTextTrackByID(period : Period, wantedId : string) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const textInfos = periodItem !== undefined ? periodItem.text :
-                                                 null;
-    if (isNullOrUndefined(textInfos)) {
-      throw new Error("TrackChoiceManager: Given Period not found.");
-    }
-    const wantedAdaptation = arrayFind(textInfos.adaptations,
-                                       ({ id }) => id === wantedId);
-
-    if (wantedAdaptation === undefined) {
-      throw new Error("Text Track not found.");
-    }
-    const chosenTextAdaptation = this._textChoiceMemory.get(period);
-    if (chosenTextAdaptation === wantedAdaptation) {
-      return;
-    }
-
-    this._textChoiceMemory.set(period, wantedAdaptation);
-    textInfos.adaptation$.next(wantedAdaptation);
+  public setTextTrackByID(periodId : string, wantedId : string) : void {
+    return this._setTrackById(periodId, "text", wantedId);
   }
 
   /**
    * Set video track based on the ID of its adaptation for a given added Period.
-   * @param {Period} period - The concerned Period.
+   * @param {string} periodId - The concerned Period's id.
    * @param {string} wantedId - adaptation id of the wanted track
-   *
-   * @throws Error - Throws if the period given has not been added
-   * @throws Error - Throws if the given id is not found in any video adaptation
-   * of the given Period.
    */
-  public setVideoTrackByID(period : Period, wantedId : string) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const videoInfos = periodItem !== undefined ? periodItem.video :
-                                                  null;
-    if (isNullOrUndefined(videoInfos)) {
-      throw new Error("LanguageManager: Given Period not found.");
+  public setVideoTrackByID(periodId : string, wantedId : string) : void {
+    return this._setTrackById(periodId, "video", wantedId);
+  }
+
+  /**
+   * Set track based on its type and the ID of its Adaptation for a given added
+   * Period.
+   * @param {string} periodId - The concerned Period's id.
+   * @param {string} bufferType - The type of track to set.
+   * @param {string} wantedId - adaptation id of the wanted track.
+   */
+  private _setTrackById(
+    periodId : string,
+    bufferType : "audio" | "video" | "text",
+    wantedId : string
+  ) : void {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
+      log.warn("TrackChoiceManager: Given Period not found.");
+      return;
     }
 
-    const wantedBaseAdaptation = arrayFind(videoInfos.adaptations,
-                                           ({ id }) => id === wantedId);
+    const period = periodItem.period;
+    const wantedAdaptation = arrayFind(period.getSupportedAdaptations(bufferType),
+                                       ({ id }) => id === wantedId);
 
-    if (wantedBaseAdaptation === undefined) {
-      throw new Error("Video Track not found.");
+    if (wantedAdaptation === undefined) {
+      throw new Error(`Wanted ${bufferType} track not found.`);
     }
 
-    const newVideoAdaptation = getRightVideoTrack(wantedBaseAdaptation,
-                                                  this.trickModeTrackEnabled);
-    this._videoChoiceMemory.set(period, { baseAdaptation: wantedBaseAdaptation,
-                                          adaptation: newVideoAdaptation });
-    videoInfos.adaptation$.next(newVideoAdaptation);
+    const typeInfo = periodItem[bufferType];
+    let newAdaptation;
+    if (bufferType === "video") {
+      if (periodItem.video.wantedTrackBase !== wantedAdaptation) {
+        periodItem.video.wantedTrackBase = wantedAdaptation;
+      }
+      newAdaptation = getRightVideoTrack(wantedAdaptation,
+                                         this.trickModeTrackEnabled);
+    } else {
+      newAdaptation = wantedAdaptation;
+    }
+    if (typeInfo.wantedTrack === newAdaptation) {
+      return;
+    }
+    typeInfo.wantedTrack = newAdaptation;
+    if (typeInfo.subject !== undefined) {
+      typeInfo.lastEmittedTrack = newAdaptation;
+      typeInfo.subject.next(newAdaptation);
+    }
   }
 
   /**
    * Disable the current text track for a given period.
    *
-   * @param {Period} period - The concerned Period.
-   *
+   * @param {string} periodId - The concerned Period's id.
    * @throws Error - Throws if the period given has not been added
    */
-  public disableTextTrack(period : Period) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const textInfos = periodItem !== undefined ? periodItem.text :
-                                                 null;
-    if (isNullOrUndefined(textInfos)) {
-      throw new Error("TrackChoiceManager: Given Period not found.");
-    }
-    const chosenTextAdaptation = this._textChoiceMemory.get(period);
-    if (chosenTextAdaptation === null) {
-      return;
-    }
-
-    this._textChoiceMemory.set(period, null);
-    textInfos.adaptation$.next(null);
+  public disableAudioTrack(periodId : string) : void {
+    return this.disableTrack(periodId, "audio");
   }
 
   /**
-   * Disable the current video track for a given period.
-   * @param {Object} period
+   * Disable the current text track for a given period.
+   *
+   * @param {string} periodId - The concerned Period's id.
    * @throws Error - Throws if the period given has not been added
    */
-  public disableVideoTrack(period : Period) : void {
-    const periodItem = getPeriodItem(this._periods, period);
-    const videoInfos = periodItem?.video;
-    if (videoInfos === undefined) {
-      throw new Error("TrackManager: Given Period not found.");
-    }
-    const chosenVideoAdaptation = this._videoChoiceMemory.get(period);
-    if (chosenVideoAdaptation === null) {
+  public disableTextTrack(periodId : string) : void {
+    return this.disableTrack(periodId, "text");
+  }
+
+  /**
+   * Disable the current text track for a given period.
+   *
+   * @param {string} periodId - The concerned Period's id.
+   * @throws Error - Throws if the period given has not been added
+   */
+  public disableVideoTrack(periodId : string) : void {
+    return this.disableTrack(periodId, "video");
+  }
+
+  /**
+   * Disable the current text track for a given period.
+   *
+   * @param {string} periodId - The concerned Period's id.
+   * @param {string} bufferType - The type of track to disable.
+   * @throws Error - Throws if the period given has not been added
+   */
+  public disableTrack(
+    periodId : string,
+    bufferType : "audio" | "video" | "text"
+  ) : void {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
+      log.warn("TrackChoiceManager: Given Period not found.");
       return;
     }
-    this._videoChoiceMemory.set(period, null);
-    videoInfos.adaptation$.next(null);
+
+    const trackInfo = periodItem[bufferType];
+    if (bufferType === "video") {
+      periodItem.video.wantedTrack = null;
+    }
+    if (trackInfo.wantedTrack === null) {
+      return;
+    }
+
+    trackInfo.wantedTrack = null;
+    if (trackInfo.subject !== undefined) {
+      trackInfo.lastEmittedTrack = null;
+      trackInfo.subject.next(null);
+    }
   }
 
   /**
    * @param {Object} period
    */
   public disableVideoTrickModeTracks(): void {
+    if (!this.trickModeTrackEnabled) {
+      return;
+    }
     this.trickModeTrackEnabled = false;
-    this._resetChosenVideoTracks();
+    this._resetVideoTrackChoices();
   }
 
   /**
    * @param {Object} period
    */
   public enableVideoTrickModeTracks() : void {
+    if (this.trickModeTrackEnabled) {
+      return;
+    }
     this.trickModeTrackEnabled = true;
-    this._resetChosenVideoTracks();
+    this._resetVideoTrackChoices();
+  }
+
+  private _resetVideoTrackChoices() {
+    for (let i = 0; i < this._store.length; i++) {
+      const periodItem = this._store[i];
+      const chosenBaseTrack = periodItem.video.wantedTrackBase;
+      if (chosenBaseTrack !== null) {
+        const chosenTrack = getRightVideoTrack(chosenBaseTrack,
+                                               this.trickModeTrackEnabled);
+        periodItem.video.wantedTrackBase = chosenBaseTrack;
+        periodItem.video.wantedTrack = chosenTrack;
+      } else {
+        periodItem.video.wantedTrackBase = null;
+        periodItem.video.wantedTrack = null;
+      }
+    }
+
+    // Clone the current Period list to not be influenced if Periods are removed
+    // or added while the loop is running.
+    const sliced = this._store.slice();
+    for (let i = 0; i < sliced.length; i++) {
+      const videoItem = sliced[i].video;
+      if (videoItem.lastEmittedTrack !== videoItem.wantedTrack &&
+          videoItem.subject !== undefined)
+      {
+        videoItem.lastEmittedTrack = videoItem.wantedTrack;
+        videoItem.subject.next(videoItem.wantedTrack);
+      }
+    }
   }
 
   /**
@@ -658,19 +670,17 @@ export default class TrackChoiceManager {
    * Returns null is the the current audio track is disabled or not
    * set yet.
    *
-   * @param {Period} period - The concerned Period.
+   * @param {string} periodId - The concerned Period's id.
    * @returns {Object|null} - The audio track chosen for this Period
    */
-  public getChosenAudioTrack(period : Period) : ITMAudioTrack|null {
-    const periodItem = getPeriodItem(this._periods, period);
-    const audioInfos = periodItem !== undefined ? periodItem.audio :
-                                                  null;
-    if (isNullOrUndefined(audioInfos)) {
-      return null;
+  public getChosenAudioTrack(periodId : string) : ITMAudioTrack | null | undefined {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
+      return undefined;
     }
 
-    const chosenTrack = this._audioChoiceMemory.get(period);
-    if (isNullOrUndefined(chosenTrack)) {
+    const chosenTrack = periodItem.audio.wantedTrack;
+    if (chosenTrack === null) {
       return null;
     }
 
@@ -694,27 +704,25 @@ export default class TrackChoiceManager {
    * Returns null is the the current text track is disabled or not
    * set yet.
    *
-   * @param {Period} period - The concerned Period.
+   * @param {string} periodId - The concerned Period's id.
    * @returns {Object|null} - The text track chosen for this Period
    */
-  public getChosenTextTrack(period : Period) : ITMTextTrack|null {
-    const periodItem = getPeriodItem(this._periods, period);
-    const textInfos = periodItem !== undefined ? periodItem.text :
-                                                 null;
-    if (isNullOrUndefined(textInfos)) {
-      return null;
+  public getChosenTextTrack(periodId : string) : ITMTextTrack | null | undefined {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
+      return undefined;
     }
 
-    const chosenTextAdaptation = this._textChoiceMemory.get(period);
-    if (isNullOrUndefined(chosenTextAdaptation)) {
+    const chosenTrack = periodItem.text.wantedTrack;
+    if (chosenTrack === null) {
       return null;
     }
 
     return {
-      language: takeFirstSet<string>(chosenTextAdaptation.language, ""),
-      normalized: takeFirstSet<string>(chosenTextAdaptation.normalizedLanguage, ""),
-      closedCaption: chosenTextAdaptation.isClosedCaption === true,
-      id: chosenTextAdaptation.id,
+      language: takeFirstSet<string>(chosenTrack.language, ""),
+      normalized: takeFirstSet<string>(chosenTrack.normalizedLanguage, ""),
+      closedCaption: chosenTrack.isClosedCaption === true,
+      id: chosenTrack.id,
     };
   }
 
@@ -725,25 +733,22 @@ export default class TrackChoiceManager {
    * Returns null is the the current video track is disabled or not
    * set yet.
    *
-   * @param {Period} period - The concerned Period.
+   * @param {string} periodId - The concerned Period's id.
    * @returns {Object|null} - The video track chosen for this Period
    */
-  public getChosenVideoTrack(period : Period) : ITMVideoTrack|null {
-    const periodItem = getPeriodItem(this._periods, period);
-    const videoInfos = periodItem !== undefined ? periodItem.video :
-                                                  null;
-    if (isNullOrUndefined(videoInfos)) {
+  public getChosenVideoTrack(periodId : string) : ITMVideoTrack | null | undefined {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
+      return undefined;
+    }
+
+    const chosenTrack = periodItem.text.wantedTrack;
+    if (chosenTrack === null) {
       return null;
     }
 
-    const chosenVideoAdaptation = this._videoChoiceMemory.get(period);
-    if (isNullOrUndefined(chosenVideoAdaptation)) {
-      return null;
-    }
-    const currAdaptation = chosenVideoAdaptation.adaptation;
-
-    const trickModeTracks = currAdaptation.trickModeTracks !== undefined ?
-      currAdaptation.trickModeTracks.map((trickModeAdaptation) => {
+    const trickModeTracks = chosenTrack.trickModeTracks !== undefined ?
+      chosenTrack.trickModeTracks.map((trickModeAdaptation) => {
         const representations = trickModeAdaptation.representations
           .map(parseVideoRepresentation);
         const trickMode : ITMVideoTrack = { id: trickModeAdaptation.id,
@@ -757,13 +762,13 @@ export default class TrackChoiceManager {
       undefined;
 
     const videoTrack: ITMVideoTrack = {
-      id: currAdaptation.id,
-      representations: currAdaptation.representations.map(parseVideoRepresentation),
+      id: chosenTrack.id,
+      representations: chosenTrack.representations.map(parseVideoRepresentation),
     };
-    if (currAdaptation.isSignInterpreted === true) {
+    if (chosenTrack.isSignInterpreted === true) {
       videoTrack.signInterpreted = true;
     }
-    if (currAdaptation.isTrickModeTrack === true) {
+    if (chosenTrack.isTrickModeTrack === true) {
       videoTrack.isTrickModeTrack = true;
     }
     if (trickModeTracks !== undefined) {
@@ -776,22 +781,19 @@ export default class TrackChoiceManager {
    * Returns all available audio tracks for a given Period, as an array of
    * objects.
    *
+   * @param {string} periodId - The concerned Period's id.
    * @returns {Array.<Object>}
    */
-  public getAvailableAudioTracks(period : Period) : ITMAudioTrackListItem[] {
-    const periodItem = getPeriodItem(this._periods, period);
-    const audioInfos = periodItem !== undefined ? periodItem.audio :
-                                                  null;
-    if (isNullOrUndefined(audioInfos)) {
+  public getAvailableAudioTracks(periodId : string) : ITMAudioTrackListItem[] {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
       return [];
     }
-
-    const chosenAudioAdaptation = this._audioChoiceMemory.get(period);
-    const currentId = !isNullOrUndefined(chosenAudioAdaptation) ?
+    const chosenAudioAdaptation = periodItem.audio.wantedTrack;
+    const currentId = chosenAudioAdaptation !== null ?
       chosenAudioAdaptation.id :
       null;
-
-    return audioInfos.adaptations
+    return periodItem.period.getSupportedAdaptations("audio")
       .map((adaptation) => {
         const formatted : ITMAudioTrackListItem = {
           language: takeFirstSet<string>(adaptation.language, ""),
@@ -813,23 +815,21 @@ export default class TrackChoiceManager {
    * Returns all available text tracks for a given Period, as an array of
    * objects.
    *
-   * @param {Period} period
+   * @param {string} periodId - The concerned Period's id.
    * @returns {Array.<Object>}
    */
-  public getAvailableTextTracks(period : Period) : ITMTextTrackListItem[] {
-    const periodItem = getPeriodItem(this._periods, period);
-    const textInfos = periodItem !== undefined ? periodItem.text :
-                                                 null;
-    if (isNullOrUndefined(textInfos)) {
+  public getAvailableTextTracks(periodId : string) : ITMTextTrackListItem[] {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
       return [];
     }
 
-    const chosenTextAdaptation = this._textChoiceMemory.get(period);
-    const currentId = !isNullOrUndefined(chosenTextAdaptation) ?
+    const chosenTextAdaptation = periodItem.text.wantedTrack;
+    const currentId = chosenTextAdaptation !== null ?
       chosenTextAdaptation.id :
       null;
 
-    return textInfos.adaptations
+    return periodItem.period.getSupportedAdaptations("text")
       .map((adaptation) => ({
         language: takeFirstSet<string>(adaptation.language, ""),
         normalized: takeFirstSet<string>(adaptation.normalizedLanguage, ""),
@@ -844,22 +844,21 @@ export default class TrackChoiceManager {
    * Returns all available video tracks for a given Period, as an array of
    * objects.
    *
+   * @param {string} periodId - The concerned Period's id.
    * @returns {Array.<Object>}
    */
-  public getAvailableVideoTracks(period : Period) : ITMVideoTrackListItem[] {
-    const periodItem = getPeriodItem(this._periods, period);
-    const videoInfos = periodItem !== undefined ? periodItem.video :
-                                                  null;
-    if (isNullOrUndefined(videoInfos)) {
+  public getAvailableVideoTracks(periodId : string) : ITMVideoTrackListItem[] {
+    const periodItem = getPeriodItem(this._store, periodId);
+    if (periodItem === undefined) {
       return [];
     }
 
-    const chosenVideoAdaptation = this._videoChoiceMemory.get(period);
-    const currentId = chosenVideoAdaptation === undefined ?
+    const chosenVideoAdaptation = periodItem.video.wantedTrack;
+    const currentId = chosenVideoAdaptation === null ?
       undefined :
-      chosenVideoAdaptation?.adaptation.id ?? undefined;
+      chosenVideoAdaptation.id;
 
-    return videoInfos.adaptations
+    return periodItem.period.getSupportedAdaptations("video")
       .map((adaptation) => {
         const trickModeTracks = adaptation.trickModeTracks !== undefined ?
           adaptation.trickModeTracks.map((trickModeAdaptation) => {
@@ -893,466 +892,22 @@ export default class TrackChoiceManager {
         return formatted;
       });
   }
-
-  /**
-   * Reset all audio tracks choices to corresponds to the current preferences.
-   */
-  private _applyAudioPreferences() : void {
-    // Remove all memorized choices and start over
-    this._audioChoiceMemory = new WeakMap();
-    this._resetChosenAudioTracks();
-  }
-
-  /**
-   * Reset all text tracks choices to corresponds to the current preferences.
-   */
-  private _applyTextPreferences() : void {
-    // Remove all memorized choices and start over
-    this._textChoiceMemory = new WeakMap();
-    this._resetChosenTextTracks();
-  }
-
-  /**
-   * Reset all video tracks choices to corresponds to the current preferences.
-   */
-  private _applyVideoPreferences() : void {
-    // Remove all memorized choices and start over
-    this._videoChoiceMemory = new WeakMap();
-    this._resetChosenVideoTracks();
-  }
-
-  /**
-   * Choose again the best audio tracks for all current Periods.
-   * This is based on two things:
-   *   1. what was the track previously chosen for that Period (by checking
-   *      `this._audioChoiceMemory`).
-   *   2. If no track were previously chosen or if it is not available anymore
-   *      we check the audio preferences.
-   */
-  private _resetChosenAudioTracks() {
-    const preferredAudioTracks = this._preferredAudioTracks;
-    const normalizedPref = normalizeAudioTracks(preferredAudioTracks);
-
-    const recursiveUpdateAudioTrack = (index : number) : void => {
-      if (index >= this._periods.length()) {
-        // we did all audio Periods, exit
-        return;
-      }
-
-      const periodItem = this._periods.get(index);
-      if (isNullOrUndefined(periodItem.audio)) {
-        // No audio choice for this period, check next one
-        recursiveUpdateAudioTrack(index + 1);
-        return;
-      }
-
-      const { period,
-              audio: audioItem } = periodItem;
-      const audioAdaptations = period.getSupportedAdaptations("audio");
-      const chosenAudioAdaptation = this._audioChoiceMemory.get(period);
-
-      if (chosenAudioAdaptation === null ||
-          (
-            chosenAudioAdaptation !== undefined &&
-            arrayIncludes(audioAdaptations, chosenAudioAdaptation)
-          )
-      ) {
-        // Already best audio for this Period, check next one
-        recursiveUpdateAudioTrack(index + 1);
-        return;
-      }
-
-      const optimalAdaptation = findFirstOptimalAudioAdaptation(audioAdaptations,
-                                                                normalizedPref);
-
-      this._audioChoiceMemory.set(period, optimalAdaptation);
-      audioItem.adaptation$.next(optimalAdaptation);
-
-      // previous "next" call could have changed everything, start over
-      recursiveUpdateAudioTrack(0);
-    };
-
-    recursiveUpdateAudioTrack(0);
-  }
-
-  /**
-   * Choose again the best text tracks for all current Periods.
-   * This is based on two things:
-   *   1. what was the track previously chosen for that Period (by checking
-   *      `this._textChoiceMemory`).
-   *   2. If no track were previously chosen or if it is not available anymore
-   *      we check the text preferences.
-   */
-  private _resetChosenTextTracks() {
-    const preferredTextTracks = this._preferredTextTracks;
-    const normalizedPref = normalizeTextTracks(preferredTextTracks);
-
-    const recursiveUpdateTextTrack = (index : number) : void => {
-      if (index >= this._periods.length()) {
-        // we did all text Periods, exit
-        return;
-      }
-
-      const periodItem = this._periods.get(index);
-      if (isNullOrUndefined(periodItem.text)) {
-        // No text choice for this period, check next one
-        recursiveUpdateTextTrack(index + 1);
-        return;
-      }
-
-      const { period,
-              text: textItem } = periodItem;
-      const textAdaptations = period.getSupportedAdaptations("text");
-      const chosenTextAdaptation = this._textChoiceMemory.get(period);
-
-      if (chosenTextAdaptation === null ||
-          (
-            chosenTextAdaptation !== undefined &&
-            arrayIncludes(textAdaptations, chosenTextAdaptation)
-          )
-      ) {
-        // Already best text for this Period, check next one
-        recursiveUpdateTextTrack(index + 1);
-        return;
-      }
-
-      const optimalAdaptation = findFirstOptimalTextAdaptation(textAdaptations,
-                                                               normalizedPref);
-
-      this._textChoiceMemory.set(period, optimalAdaptation);
-      textItem.adaptation$.next(optimalAdaptation);
-
-      // previous "next" call could have changed everything, start over
-      recursiveUpdateTextTrack(0);
-    };
-
-    recursiveUpdateTextTrack(0);
-  }
-
-  /**
-   * Choose again the best video tracks for all current Periods.
-   * This is based on two things:
-   *   1. what was the track previously chosen for that Period (by checking
-   *      `this._videoChoiceMemory`).
-   *   2. If no track were previously chosen or if it is not available anymore
-   *      we check the video preferences.
-   */
-  private _resetChosenVideoTracks() {
-    const preferredVideoTracks = this._preferredVideoTracks;
-    const recursiveUpdateVideoTrack = (index : number) : void => {
-      if (index >= this._periods.length()) {
-        // we did all video Periods, exit
-        return;
-      }
-
-      const periodItem = this._periods.get(index);
-      if (isNullOrUndefined(periodItem.video)) {
-        // No video choice for this period, check next one
-        recursiveUpdateVideoTrack(index + 1);
-        return;
-      }
-
-      const { period, video: videoItem } = periodItem;
-      const videoAdaptations = period.getSupportedAdaptations("video");
-      const chosenVideoAdaptation = this._videoChoiceMemory.get(period);
-
-      if (chosenVideoAdaptation === null) {
-        // No video track for that one, so nothing to change.
-        recursiveUpdateVideoTrack(index + 1);
-        return;
-      } else if (chosenVideoAdaptation !== undefined &&
-                 arrayIncludes(videoAdaptations,
-                               chosenVideoAdaptation.baseAdaptation))
-      {
-        // The right Base Adaptation is selected and is still available.
-        // Check if the selected Adaptation is still right
-        const wantedVideoAdaptation = getRightVideoTrack(
-          chosenVideoAdaptation.baseAdaptation,
-          this.trickModeTrackEnabled
-        );
-        if (wantedVideoAdaptation.id === chosenVideoAdaptation.adaptation.id) {
-          // We're good, continue.
-          recursiveUpdateVideoTrack(index + 1);
-          return;
-        } else {
-          // select the right track
-          this._videoChoiceMemory.set(period, {
-            baseAdaptation: chosenVideoAdaptation.baseAdaptation,
-            adaptation: wantedVideoAdaptation,
-          });
-          videoItem.adaptation$.next(wantedVideoAdaptation);
-
-          // previous "next" call could have changed everything, start over
-          return recursiveUpdateVideoTrack(0);
-        }
-      }
-
-      const optimalAdaptation = findFirstOptimalVideoAdaptation(videoAdaptations,
-                                                                preferredVideoTracks);
-      if (optimalAdaptation === null) {
-        this._videoChoiceMemory.set(period, null);
-        videoItem.adaptation$.next(null);
-        // previous "next" call could have changed everything, start over
-        return recursiveUpdateVideoTrack(0);
-      }
-
-      const newVideoAdaptation = getRightVideoTrack(optimalAdaptation,
-                                                    this.trickModeTrackEnabled);
-      this._videoChoiceMemory.set(period, { baseAdaptation: optimalAdaptation,
-                                            adaptation: newVideoAdaptation });
-      videoItem.adaptation$.next(newVideoAdaptation);
-
-      // previous "next" call could have changed everything, start over
-      return recursiveUpdateVideoTrack(0);
-    };
-
-    recursiveUpdateVideoTrack(0);
-  }
-}
-
-/**
- * Create a function allowing to compare audio Adaptations with a given
- * `preferredAudioTrack` preference to see if they match.
- *
- * This function is curried to be easily and optimally used in a loop context.
- *
- * @param {Object} preferredAudioTrack - The audio track preference you want to
- * compare audio Adaptations to.
- * @returns {Function} - Function taking in argument an audio Adaptation and
- * returning `true` if it matches the `preferredAudioTrack` preference (and
- * `false` otherwise.
- */
-function createAudioPreferenceMatcher(
-  preferredAudioTrack : INormalizedPreferredAudioTrackObject
-) : (audioAdaptation : Adaptation) => boolean {
-  /**
-   * Compares an audio Adaptation to the given `preferredAudioTrack` preference.
-   * Returns `true` if it matches, false otherwise.
-   * @param {Object} audioAdaptation
-   * @returns {boolean}
-   */
-  return function matchAudioPreference(audioAdaptation : Adaptation) : boolean {
-    if (preferredAudioTrack.normalized !== undefined) {
-      const language = audioAdaptation.normalizedLanguage ?? "";
-      if (language !== preferredAudioTrack.normalized) {
-        return false;
-      }
-    }
-    if (preferredAudioTrack.audioDescription !== undefined) {
-      if (preferredAudioTrack.audioDescription) {
-        if (audioAdaptation.isAudioDescription !== true) {
-          return false;
-        }
-      } else if (audioAdaptation.isAudioDescription === true) {
-        return false;
-      }
-    }
-    if (preferredAudioTrack.codec === undefined) {
-      return true;
-    }
-    const regxp = preferredAudioTrack.codec.test;
-    const codecTestingFn = (rep : Representation) =>
-      rep.codec !== undefined && regxp.test(rep.codec);
-
-    if (preferredAudioTrack.codec.all) {
-      return audioAdaptation.representations.every(codecTestingFn);
-    }
-    return audioAdaptation.representations.some(codecTestingFn);
-  };
-}
-
-/**
- * Find an optimal audio adaptation given their list and the array of preferred
- * audio tracks sorted from the most preferred to the least preferred.
- *
- * `null` if the most optimal audio adaptation is no audio adaptation.
- * @param {Array.<Adaptation>} audioAdaptations
- * @param {Array.<Object|null>} preferredAudioTracks
- * @returns {Adaptation|null}
- */
-function findFirstOptimalAudioAdaptation(
-  audioAdaptations : Adaptation[],
-  preferredAudioTracks : INormalizedPreferredAudioTrack[]
-) : Adaptation|null {
-  if (audioAdaptations.length === 0) {
-    return null;
-  }
-
-  for (let i = 0; i < preferredAudioTracks.length; i++) {
-    const preferredAudioTrack = preferredAudioTracks[i];
-
-    if (preferredAudioTrack === null) {
-      return null;
-    }
-
-    const matchPreferredAudio = createAudioPreferenceMatcher(preferredAudioTrack);
-    const foundAdaptation = arrayFind(audioAdaptations, matchPreferredAudio);
-
-    if (foundAdaptation !== undefined) {
-      return foundAdaptation;
-    }
-  }
-
-  // no optimal adaptation, just return the first one
-  return audioAdaptations[0];
-}
-
-/**
- * Create a function allowing to compare text Adaptations with a given
- * `preferredTextTrack` preference to see if they match.
- *
- * This function is curried to be easily and optimally used in a loop context.
- *
- * @param {Object} preferredTextTrack - The text track preference you want to
- * compare text Adaptations to.
- * @returns {Function} - Function taking in argument a text Adaptation and
- * returning `true` if it matches the `preferredTextTrack` preference (and
- * `false` otherwise.
- */
-function createTextPreferenceMatcher(
-  preferredTextTrack : INormalizedPreferredTextTrackObject
-) : (textAdaptation : Adaptation) => boolean {
-  /**
-   * Compares a text Adaptation to the given `preferredTextTrack` preference.
-   * Returns `true` if it matches, false otherwise.
-   * @param {Object} textAdaptation
-   * @returns {boolean}
-   */
-  return function matchTextPreference(textAdaptation : Adaptation) : boolean {
-    return takeFirstSet<string>(textAdaptation.normalizedLanguage,
-                                "") === preferredTextTrack.normalized &&
-    (preferredTextTrack.closedCaption ? textAdaptation.isClosedCaption === true :
-                                        textAdaptation.isClosedCaption !== true);
-  };
-}
-
-/**
- * Find an optimal text adaptation given their list and the array of preferred
- * text tracks sorted from the most preferred to the least preferred.
- *
- * `null` if the most optimal text adaptation is no text adaptation.
- * @param {Array.<Object>} textAdaptations
- * @param {Array.<Object|null>} preferredTextTracks
- * @returns {Adaptation|null}
- */
-function findFirstOptimalTextAdaptation(
-  textAdaptations : Adaptation[],
-  preferredTextTracks : INormalizedPreferredTextTrack[]
-) : Adaptation|null {
-  if (textAdaptations.length === 0) {
-    return null;
-  }
-
-  for (let i = 0; i < preferredTextTracks.length; i++) {
-    const preferredTextTrack = preferredTextTracks[i];
-
-    if (preferredTextTrack === null) {
-      return null;
-    }
-
-    const matchPreferredText = createTextPreferenceMatcher(preferredTextTrack);
-    const foundAdaptation = arrayFind(textAdaptations, matchPreferredText);
-
-    if (foundAdaptation !== undefined) {
-      return foundAdaptation;
-    }
-  }
-
-  // no optimal adaptation
-  return null;
-}
-
-/**
- * Create a function allowing to compare video Adaptations with a given
- * `preferredVideoTrack` preference to see if they match.
- *
- * This function is curried to be easily and optimally used in a loop context.
- *
- * @param {Object} preferredVideoTrack - The video track preference you want to
- * compare video Adaptations to.
- * @returns {Function} - Function taking in argument a video Adaptation and
- * returning `true` if it matches the `preferredVideoTrack` preference (and
- * `false` otherwise.
- */
-function createVideoPreferenceMatcher(
-  preferredVideoTrack : IVideoTrackPreferenceObject
-) : (videoAdaptation : Adaptation) => boolean {
-  /**
-   * Compares a video Adaptation to the given `preferredVideoTrack` preference.
-   * Returns `true` if it matches, false otherwise.
-   * @param {Object} videoAdaptation
-   * @returns {boolean}
-   */
-  return function matchVideoPreference(videoAdaptation : Adaptation) : boolean {
-    if (preferredVideoTrack.signInterpreted !== undefined &&
-        preferredVideoTrack.signInterpreted !== videoAdaptation.isSignInterpreted)
-    {
-      return false;
-    }
-    if (preferredVideoTrack.codec === undefined) {
-      return true;
-    }
-    const regxp = preferredVideoTrack.codec.test;
-    const codecTestingFn = (rep : Representation) =>
-      rep.codec !== undefined && regxp.test(rep.codec);
-
-    if (preferredVideoTrack.codec.all) {
-      return videoAdaptation.representations.every(codecTestingFn);
-    }
-    return videoAdaptation.representations.some(codecTestingFn);
-  };
-}
-
-/**
- * Find an optimal video adaptation given their list and the array of preferred
- * video tracks sorted from the most preferred to the least preferred.
- *
- * `null` if the most optimal video adaptation is no video adaptation.
- * @param {Array.<Adaptation>} videoAdaptations
- * @param {Array.<Object|null>} preferredvideoTracks
- * @returns {Adaptation|null}
- */
-function findFirstOptimalVideoAdaptation(
-  videoAdaptations : Adaptation[],
-  preferredVideoTracks : IVideoTrackPreference[]
-) : Adaptation|null {
-  if (videoAdaptations.length === 0) {
-    return null;
-  }
-
-  for (let i = 0; i < preferredVideoTracks.length; i++) {
-    const preferredVideoTrack = preferredVideoTracks[i];
-
-    if (preferredVideoTrack === null) {
-      return null;
-    }
-
-    const matchPreferredVideo = createVideoPreferenceMatcher(preferredVideoTrack);
-    const foundAdaptation = arrayFind(videoAdaptations, matchPreferredVideo);
-
-    if (foundAdaptation !== undefined) {
-      return foundAdaptation;
-    }
-  }
-
-  // no optimal adaptation, just return the first one
-  return videoAdaptations[0];
 }
 
 /**
  * Returns the index of the given `period` in the given `periods`
- * SortedList.
+ * Array.
  * Returns `undefined` if that `period` is not found.
  * @param {Object} periods
  * @param {Object} period
  * @returns {number|undefined}
  */
 function findPeriodIndex(
-  periods : SortedList<ITMPeriodInfos>,
+  periods : ITMPeriodInfos[],
   period : Period
 ) : number|undefined {
-  for (let i = 0; i < periods.length(); i++) {
-    const periodI = periods.get(i);
+  for (let i = 0; i < periods.length; i++) {
+    const periodI = periods[i];
     if (periodI.period.id === period.id) {
       return i;
     }
@@ -1360,20 +915,20 @@ function findPeriodIndex(
 }
 
 /**
- * Returns element in the given `periods` SortedList that corresponds to the
+ * Returns element in the given `periods` Array that corresponds to the
  * `period` given.
  * Returns `undefined` if that `period` is not found.
  * @param {Object} periods
- * @param {Object} period
+ * @param {string} periodId
  * @returns {Object|undefined}
  */
 function getPeriodItem(
-  periods : SortedList<ITMPeriodInfos>,
-  period : Period
+  periods : ITMPeriodInfos[],
+  periodId : string
 ) : ITMPeriodInfos|undefined {
-  for (let i = 0; i < periods.length(); i++) {
-    const periodI = periods.get(i);
-    if (periodI.period.id === period.id) {
+  for (let i = 0; i < periods.length; i++) {
+    const periodI = periods[i];
+    if (periodI.period.id === periodId) {
       return periodI;
     }
   }
@@ -1388,6 +943,22 @@ function parseVideoRepresentation(
   { id, bitrate, frameRate, width, height, codec, hdrInfo } : Representation
 ) : ITMVideoRepresentation {
   return { id, bitrate, frameRate, width, height, codec, hdrInfo };
+}
+
+/**
+ * A `ITMPeriodInfos` should only be removed once all subjects linked to it do
+ * not exist anymore, to keep the possibility of making track choices.
+ * @param {Object} periodItem
+ * @returns {boolean}
+ */
+function isPeriodItemRemovable(
+  periodItem : ITMPeriodInfos
+) : boolean {
+  // XXX TODO Keep for some time
+  return !periodItem.inManifest &&
+         periodItem.text?.subject === undefined &&
+         periodItem.audio?.subject === undefined &&
+         periodItem.video?.subject === undefined;
 }
 
 /**

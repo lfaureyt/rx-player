@@ -167,7 +167,7 @@ export default function PeriodStream({
         if (segmentBufferStatus.type === "initialized") {
           log.info(`Stream: Clearing previous ${bufferType} SegmentBuffer`);
           if (SegmentBuffersStore.isNative(bufferType)) {
-            return reloadAfterSwitch(period, clock$, relativePosAfterSwitch);
+            return reloadAfterSwitch(period, clock$, 0);
           }
           cleanBuffer$ = segmentBufferStatus.value
             .removeBuffer(period.start,
@@ -189,7 +189,7 @@ export default function PeriodStream({
       if (SegmentBuffersStore.isNative(bufferType) &&
           segmentBuffersStore.getStatus(bufferType).type === "disabled")
       {
-        return reloadAfterSwitch(period, clock$, relativePosAfterSwitch);
+        return reloadAfterSwitch(period, clock$, 0);
       }
 
       log.info(`Stream: Updating ${bufferType} adaptation`, adaptation, period);
