@@ -15,16 +15,14 @@
  */
 
 import {
+  mapTo,
+  mergeMap,
   Observable,
   of as observableOf,
   ReplaySubject,
-} from "rxjs";
-import {
-  mapTo,
-  mergeMap,
   startWith,
   take,
-} from "rxjs/operators";
+} from "rxjs";
 import log from "../../log";
 import isNullOrUndefined from "../../utils/is_null_or_undefined";
 import attachMediaKeys, {

@@ -16,14 +16,12 @@
 
 import {
   combineLatest as observableCombineLatest,
-  merge as observableMerge,
-  Observable,
-} from "rxjs";
-import {
   ignoreElements,
   map,
+  merge as observableMerge,
+  Observable,
   tap,
-} from "rxjs/operators";
+} from "rxjs";
 import Manifest from "../../manifest";
 import { IStreamOrchestratorClockTick } from "../stream";
 import { IInitClockTick } from "./types";

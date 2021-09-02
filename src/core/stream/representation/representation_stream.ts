@@ -29,23 +29,21 @@ import {
   concat as observableConcat,
   defer as observableDefer,
   EMPTY,
+  finalize,
+  ignoreElements,
   merge as observableMerge,
+  mergeMap,
   Observable,
   of as observableOf,
   ReplaySubject,
-  Subject,
-} from "rxjs";
-import {
-  finalize,
-  ignoreElements,
-  mergeMap,
   share,
   startWith,
+  Subject,
   switchMap,
   take,
   takeWhile,
   withLatestFrom,
-} from "rxjs/operators";
+} from "rxjs";
 import { ICustomError } from "../../../errors";
 import log from "../../../log";
 import Manifest, {

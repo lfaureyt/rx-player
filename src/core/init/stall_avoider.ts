@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-import { Observable } from "rxjs";
 import {
   map,
+  Observable,
   scan,
   withLatestFrom,
-} from "rxjs/operators";
+} from "rxjs";
 import isSeekingApproximate from "../../compat/is_seeking_approximate";
 import config from "../../config";
 import { MediaError } from "../../errors";
