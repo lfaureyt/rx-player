@@ -65,6 +65,7 @@ import {
   IPrioritizedSegmentFetcherEvent,
   ISegmentFetcherWarning,
 } from "../../fetchers";
+import { IReadOnlyPlaybackObserver } from "../../init";
 import { SegmentBuffer } from "../../segment_buffers";
 import EVENTS from "../events_generators";
 import {
@@ -83,15 +84,13 @@ import getSegmentPriority from "./get_segment_priority";
 import pushInitSegment from "./push_init_segment";
 import pushMediaSegment from "./push_media_segment";
 
-/** Object emitted by the Stream's clock$ at each tick. */
-export interface IRepresentationStreamClockTick {
-  /** The position, in seconds, the media element was in at the time of the tick. */
+/** Object that should be emitted by the given `IReadOnlyPlaybackObserver`. */
+export interface IRepresentationStreamPlaybackObservation {
+  /**
+   * The position, in seconds, the media element was in at the time of the
+   * playback observation.
+   */
   position : number;
- /**
-  * Gap between the current position and the edge of a live content.
-  * Not set for non-live contents.
-  */
-  liveGap? : number;
   /**
    * Offset in seconds to add to the time to obtain the position we
    * actually want to download from.
@@ -100,8 +99,6 @@ export interface IRepresentationStreamClockTick {
    * starting position different from `0`.
    */
   wantedTimeOffset : number;
-  /** Fetch the precize position currently in the HTMLMediaElement. */
-  getCurrentTime() : number;
 }
 
 /** Item emitted by the `terminate$` Observable given to a RepresentationStream. */
@@ -117,8 +114,6 @@ export interface ITerminationOrder {
 
 /** Arguments to give to the RepresentationStream. */
 export interface IRepresentationStreamArguments<TSegmentDataType> {
-  /** Periodically emits the current playback conditions. */
-  clock$ : Observable<IRepresentationStreamClockTick>;
   /** The context of the Representation you want to load. */
   content: { adaptation : Adaptation;
              manifest : Manifest;
@@ -139,6 +134,8 @@ export interface IRepresentationStreamArguments<TSegmentDataType> {
    * Observable once the corresponding segments have been pushed).
    */
   terminate$ : Observable<ITerminationOrder>;
+  /** Periodically emits the current playback conditions. */
+  playbackObserver : IReadOnlyPlaybackObserver<IRepresentationStreamPlaybackObservation>;
   /** Supplementary arguments which configure the RepresentationStream's behavior. */
   options: IRepresentationStreamOptions;
 }
@@ -199,12 +196,12 @@ export interface IRepresentationStreamOptions {
  * @returns {Observable}
  */
 export default function RepresentationStream<TSegmentDataType>({
-  clock$,
   content,
+  options,
+  playbackObserver,
   segmentBuffer,
   segmentFetcher,
   terminate$,
-  options,
 } : IRepresentationStreamArguments<TSegmentDataType>
 ) : Observable<IRepresentationStreamEvent> {
   const { manifest, period, adaptation, representation } = content;
@@ -241,7 +238,7 @@ export default function RepresentationStream<TSegmentDataType>({
                               null = null;
 
   const status$ = observableCombineLatest([
-    clock$,
+    playbackObserver.listen(true),
     bufferGoal$,
     terminate$.pipe(take(1),
                     startWith(null)),
@@ -249,14 +246,14 @@ export default function RepresentationStream<TSegmentDataType>({
   ).pipe(
     withLatestFrom(fastSwitchThreshold$),
     mergeMap(function (
-      [ [ tick, bufferGoal, terminate ],
+      [ [ observation, bufferGoal, terminate ],
         fastSwitchThreshold ]
     ) : Observable<IStreamStatusEvent |
                    IStreamNeedsManifestRefresh |
                    IStreamTerminatingEvent>
     {
       const status = getBufferStatus(content,
-                                     tick,
+                                     playbackObserver,
                                      fastSwitchThreshold,
                                      bufferGoal,
                                      segmentBuffer);
@@ -270,8 +267,10 @@ export default function RepresentationStream<TSegmentDataType>({
           log.warn("Stream: Uninitialized index with an already loaded " +
                    "initialization segment");
         } else {
+          const wantedStart = observation.position + observation.wantedTimeOffset;
           neededSegments.unshift({ segment: initSegment,
-                                   priority: getSegmentPriority(period.start, tick) });
+                                   priority: getSegmentPriority(period.start,
+                                                                wantedStart) });
         }
       } else if (neededSegments.length > 0 &&
                  initSegment !== null &&
@@ -339,7 +338,7 @@ export default function RepresentationStream<TSegmentDataType>({
       const bufferStatusEvt : Observable<IStreamStatusEvent> =
         observableOf({ type: "stream-status" as const,
                        value: { period,
-                                position: tick.position,
+                                position: observation.position,
                                 bufferType,
                                 imminentDiscontinuity: status.imminentDiscontinuity,
                                 hasFinishedLoading: status.hasFinishedLoading,
@@ -514,7 +513,7 @@ export default function RepresentationStream<TSegmentDataType>({
         observableOf(...allEncryptionData.map(p =>
           EVENTS.encryptionDataEncountered(p))) :
         EMPTY;
-      const pushEvent$ = pushInitSegment({ clock$,
+      const pushEvent$ = pushInitSegment({ playbackObserver,
                                            content,
                                            segment: evt.segment,
                                            segmentData: parsed.initializationData,
@@ -546,7 +545,7 @@ export default function RepresentationStream<TSegmentDataType>({
       return observableConcat(segmentEncryptionEvent$,
                               manifestRefresh$,
                               inbandEvents$,
-                              pushMediaSegment({ clock$,
+                              pushMediaSegment({ playbackObserver,
                                                  content,
                                                  initSegmentData,
                                                  parsedSegment: parsed,

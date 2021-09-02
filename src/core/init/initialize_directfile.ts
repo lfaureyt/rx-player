@@ -40,6 +40,7 @@ import {
 } from "../../compat";
 import log from "../../log";
 import deferSubscriptions from "../../utils/defer_subscriptions";
+import { PlaybackObserver } from "../api";
 import { IKeySystemOption } from "../eme";
 import createEMEManager from "./create_eme_manager";
 import emitLoadedEvent from "./emit_loaded_event";
@@ -47,10 +48,7 @@ import { IInitialTimeOptions } from "./get_initial_time";
 import initialSeekAndPlay from "./initial_seek_and_play";
 import StallAvoider from "./stall_avoider";
 import throwOnMediaError from "./throw_on_media_error";
-import {
-  IDirectfileEvent,
-  IInitClockTick,
-} from "./types";
+import { IDirectfileEvent } from "./types";
 import updatePlaybackRate from "./update_playback_rate";
 
 /**
@@ -100,11 +98,10 @@ function getDirectFileInitialTime(
 
 // Argument used by `initializeDirectfileContent`
 export interface IDirectFileOptions { autoPlay : boolean;
-                                      clock$ : Observable<IInitClockTick>;
                                       keySystems : IKeySystemOption[];
                                       mediaElement : HTMLMediaElement;
+                                      playbackObserver : PlaybackObserver;
                                       speed$ : Observable<number>;
-                                      setCurrentTime: (nb: number) => void;
                                       startAt? : IInitialTimeOptions;
                                       url? : string; }
 
@@ -115,11 +112,10 @@ export interface IDirectFileOptions { autoPlay : boolean;
  */
 export default function initializeDirectfileContent({
   autoPlay,
-  clock$,
   keySystems,
   mediaElement,
+  playbackObserver,
   speed$,
-  setCurrentTime,
   startAt,
   url,
 } : IDirectFileOptions) : Observable<IDirectfileEvent> {
@@ -137,12 +133,11 @@ export default function initializeDirectfileContent({
   const initialTime = () => getDirectFileInitialTime(mediaElement, startAt);
   log.debug("Init: Initial time calculated:", initialTime);
 
-  const { seek$, play$ } = initialSeekAndPlay({ clock$,
-                                                mediaElement,
+  const observation$ = playbackObserver.listen(true);
+  const { seek$, play$ } = initialSeekAndPlay({ mediaElement,
+                                                playbackObserver,
                                                 startTime: initialTime,
-                                                mustAutoPlay: autoPlay,
-                                                setCurrentTime,
-                                                isDirectfile: true });
+                                                mustAutoPlay: autoPlay });
 
   // Create EME Manager, an observable which will manage every EME-related
   // issue.
@@ -159,18 +154,14 @@ export default function initializeDirectfileContent({
   // Set the speed set by the user on the media element while pausing a
   // little longer while the buffer is empty.
   const playbackRate$ =
-    updatePlaybackRate(mediaElement, speed$, clock$)
+    updatePlaybackRate(mediaElement, speed$, observation$)
       .pipe(ignoreElements());
 
   /**
    * Observable trying to avoid various stalling situations, emitting "stalled"
    * events when it cannot, as well as "unstalled" events when it get out of one.
    */
-  const stallAvoider$ = StallAvoider(clock$,
-                                     mediaElement,
-                                     null,
-                                     EMPTY,
-                                     setCurrentTime);
+  const stallAvoider$ = StallAvoider(playbackObserver, null, EMPTY);
 
   /**
    * Emit a "loaded" events once the initial play has been performed and the
@@ -191,7 +182,7 @@ export default function initializeDirectfileContent({
       if (evt.type === "warning") {
         return observableOf(evt);
       }
-      return emitLoadedEvent(clock$, mediaElement, null, true);
+      return emitLoadedEvent(observation$, mediaElement, null, true);
     }));
 
   const initialSeek$ = seek$.pipe(ignoreElements());

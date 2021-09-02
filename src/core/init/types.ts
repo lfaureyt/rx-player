@@ -14,17 +14,13 @@
  * limitations under the License.
  */
 
+import { Observable } from "rxjs";
 import { ICustomError } from "../../errors";
 import Manifest, {
   Adaptation,
   Period,
   Representation,
 } from "../../manifest";
-import {
-  IClockMediaEventType,
-  IFreezingStatus,
-  IRebufferingStatus,
-} from "../api";
 import {
   IAttachedMediaKeysEvent,
   IBlacklistProtectionDataEvent,
@@ -60,24 +56,17 @@ import {
   IStreamEventSkipEvent,
 } from "./stream_events_emitter";
 
-/** Object awaited by the `Init` on each clock tick. */
-export interface IInitClockTick { position : number;
-                                  getCurrentTime : () => number;
-                                  buffered : TimeRanges;
-                                  duration : number;
-                                  bufferGap : number;
-                                  event : IClockMediaEventType;
-                                  playbackRate : number;
-                                  currentRange : { start : number;
-                                                   end : number; } |
-                                                 null;
-                                  readyState : number;
-                                  paused : boolean;
-                                  rebuffering : IRebufferingStatus |
-                                                null;
-                                  freezing : IFreezingStatus |
-                                             null;
-                                  seeking : boolean; }
+/**
+ * Generic version of a `PlaybackObserver` which does not allow the playback
+ * modification.
+ * This can be very useful to give playback information to modules you don't want
+ * to be able to update playback.
+ */
+export interface IReadOnlyPlaybackObserver<T> {
+  getLastObservation() : T;
+  getCurrentTime() : number;
+  listen(includeLastObservation : boolean) : Observable<T>;
+}
 
 /** Event sent after the Manifest has been loaded and parsed for the first time. */
 export interface IManifestReadyEvent {

@@ -27,7 +27,7 @@ import {
   tap,
 } from "rxjs/operators";
 import log from "../../log";
-import { IInitClockTick } from "./types";
+import { IPlaybackObservation } from "../api";
 
 export interface IPlaybackRateOptions { pauseWhenRebuffering? : boolean }
 
@@ -38,17 +38,17 @@ export interface IPlaybackRateOptions { pauseWhenRebuffering? : boolean }
  *
  * @param {HTMLMediaElement} mediaElement
  * @param {Observable} speed$ - emit speed set by the user
- * @param {Observable} clock$ - Current playback conditions
+ * @param {Observable} observation$ - Current playback conditions
  * @returns {Observable}
  */
 export default function updatePlaybackRate(
   mediaElement : HTMLMediaElement,
   speed$ : Observable<number>,
-  clock$ : Observable<IInitClockTick>
+  observation$ : Observable<IPlaybackObservation>
 ) : Observable<number> {
-  const forcePause$ = clock$
+  const forcePause$ = observation$
     .pipe(
-      map((timing) => timing.rebuffering !== null),
+      map((observation) => observation.rebuffering !== null),
       startWith(false),
       distinctUntilChanged()
     );

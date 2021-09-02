@@ -27,6 +27,7 @@ import {
   ignoreElements,
 } from "rxjs/operators";
 import { MediaError } from "../../../errors";
+import { IReadOnlyPlaybackObserver } from "../../init";
 import {
   IPushChunkInfos,
   SegmentBuffer,
@@ -38,13 +39,14 @@ import forceGarbageCollection from "./force_garbage_collection";
  * If it leads to a QuotaExceededError, try to run our custom range
  * _garbage collector_ then retry.
  *
- * @param {Observable} clock$
+ * @param {Observable} playbackObserver
  * @param {Object} segmentBuffer
  * @param {Object} dataInfos
  * @returns {Observable}
  */
 export default function appendSegmentToBuffer<T>(
-  clock$ : Observable<{ position : number }>,
+  playbackObserver : IReadOnlyPlaybackObserver<{ position : number;
+                                                 wantedTimeOffset: number; }>,
   segmentBuffer : SegmentBuffer,
   dataInfos : IPushChunkInfos<T>
 ) : Observable<unknown> {
@@ -59,8 +61,10 @@ export default function appendSegmentToBuffer<T>(
         throw new MediaError("BUFFER_APPEND_ERROR", reason);
       }
 
+      const lastObservation = playbackObserver.getLastObservation();
+      const currentPos = lastObservation.position + lastObservation.wantedTimeOffset;
       return observableConcat(
-        forceGarbageCollection(clock$, segmentBuffer).pipe(ignoreElements()),
+        forceGarbageCollection(currentPos, segmentBuffer).pipe(ignoreElements()),
         append$
       ).pipe(
         catchError((forcedGCError : unknown) => {

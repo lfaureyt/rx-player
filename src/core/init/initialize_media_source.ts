@@ -50,6 +50,7 @@ import objectAssign from "../../utils/object_assign";
 import ABRManager, {
   IABRManagerArguments,
 } from "../abr";
+import { PlaybackObserver } from "../api";
 import {
   getCurrentKeySystem,
   IContentProtection,
@@ -77,7 +78,6 @@ import manifestUpdateScheduler, {
 } from "./manifest_update_scheduler";
 import throwOnMediaError from "./throw_on_media_error";
 import {
-  IInitClockTick,
   IInitEvent,
   IMediaSourceLoaderEvent,
 } from "./types";
@@ -111,7 +111,7 @@ export interface IInitializeArguments {
     onCodecSwitch : "continue" | "reload";
   };
   /** Regularly emit current playback conditions. */
-  clock$ : Observable<IInitClockTick>;
+  playbackObserver : PlaybackObserver;
   /** Every encryption configuration set. */
   keySystems : IKeySystemOption[];
   /** `true` to play low-latency contents optimally. */
@@ -127,10 +127,8 @@ export interface IInitializeArguments {
   minimumManifestUpdateInterval : number;
   /** Interface allowing to load segments */
   segmentFetcherCreator : SegmentFetcherCreator;
-  /** Perform an internal seek */
-  setCurrentTime: (time: number) => void;
   /** Emit the playback rate (speed) set by the user. */
-  speed$ : Observable<number>;
+  speed$ : BehaviorSubject<number>;
   /** The configured starting position. */
   startAt? : IInitialTimeOptions;
   /** Configuration specific to the text track. */
@@ -172,15 +170,14 @@ export default function InitializeOnMediaSource(
   { adaptiveOptions,
     autoPlay,
     bufferOptions,
-    clock$,
     keySystems,
     lowLatencyMode,
     manifest$,
     manifestFetcher,
     mediaElement,
     minimumManifestUpdateInterval,
+    playbackObserver,
     segmentFetcherCreator,
-    setCurrentTime,
     speed$,
     startAt,
     textTrackOptions } : IInitializeArguments
@@ -298,12 +295,11 @@ export default function InitializeOnMediaSource(
         abrManager,
         bufferOptions: objectAssign({ textTrackOptions, drmSystemId },
                                     bufferOptions),
-        clock$,
         manifest,
         mediaElement,
+        playbackObserver,
         segmentFetcherCreator,
         speed$,
-        setCurrentTime,
       });
 
       // handle initial load and reloads
@@ -388,16 +384,16 @@ export default function InitializeOnMediaSource(
                 // to flush the buffers
                 const { position } = evt.value;
                 if (position + 0.001 < evt.value.duration) {
-                  setCurrentTime(mediaElement.currentTime + 0.001);
+                  playbackObserver.setCurrentTime(mediaElement.currentTime + 0.001);
                 } else {
-                  setCurrentTime(position);
+                  playbackObserver.setCurrentTime(position);
                 }
                 return null;
               case "encryption-data-encountered":
                 protectedSegments$.next(evt.value);
                 return null;
               case "needs-buffer-flush":
-                setCurrentTime(mediaElement.currentTime + 0.001);
+                playbackObserver.setCurrentTime(mediaElement.currentTime + 0.001);
                 return null;
             }
             return evt;

@@ -22,6 +22,7 @@ import {
 import { mergeMap } from "rxjs/operators";
 import log from "../../../log";
 import { Period } from "../../../manifest";
+import { IReadOnlyPlaybackObserver } from "../../init";
 import { IBufferType } from "../../segment_buffers";
 import { IStreamStatusEvent } from "../types";
 
@@ -30,23 +31,24 @@ import { IStreamStatusEvent } from "../types";
  *
  * This observable will never download any segment and just emit a "full"
  * event when reaching the end.
- * @param {Observable} streamClock$
+ * @param {Observable} playbackObserver
  * @param {Observable} wantedBufferAhead$
  * @param {string} bufferType
  * @param {Object} content
  * @returns {Observable}
  */
 export default function createEmptyAdaptationStream(
-  streamClock$ : Observable<{ position : number }>,
+  playbackObserver : IReadOnlyPlaybackObserver<{ position : number }>,
   wantedBufferAhead$ : Observable<number>,
   bufferType : IBufferType,
   content : { period : Period }
 ) : Observable<IStreamStatusEvent> {
   const { period } = content;
   let hasFinishedLoading = false;
-  return observableCombineLatest([streamClock$, wantedBufferAhead$]).pipe(
-    mergeMap(([clockTick, wantedBufferAhead]) => {
-      const { position } = clockTick;
+  const observation$ = playbackObserver.listen(true);
+  return observableCombineLatest([observation$, wantedBufferAhead$]).pipe(
+    mergeMap(([observation, wantedBufferAhead]) => {
+      const { position } = observation;
       if (period.end !== undefined && position + wantedBufferAhead >= period.end) {
         log.debug("Stream: full \"empty\" AdaptationStream", bufferType);
         hasFinishedLoading = true;
@@ -54,7 +56,7 @@ export default function createEmptyAdaptationStream(
       return observableOf({ type: "stream-status" as const,
                             value: { period,
                                      bufferType,
-                                     position: clockTick.position,
+                                     position: observation.position,
                                      imminentDiscontinuity: null,
                                      hasFinishedLoading,
                                      neededSegments: [],

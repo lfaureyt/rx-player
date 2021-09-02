@@ -51,6 +51,7 @@ import SortedList from "../../../utils/sorted_list";
 import WeakMapMemory from "../../../utils/weak_map_memory";
 import ABRManager from "../../abr";
 import { SegmentFetcherCreator } from "../../fetchers";
+import type { IReadOnlyPlaybackObserver } from "../../init";
 import SegmentBuffersStore, {
   BufferGarbageCollector,
   IBufferType,
@@ -58,7 +59,7 @@ import SegmentBuffersStore, {
 } from "../../segment_buffers";
 import EVENTS from "../events_generators";
 import PeriodStream, {
-  IPeriodStreamClockTick,
+  IPeriodStreamPlaybackObservation,
   IPeriodStreamOptions,
 } from "../period";
 import {
@@ -71,7 +72,7 @@ import ActivePeriodEmitter from "./active_period_emitter";
 import areStreamsComplete from "./are_streams_complete";
 import getBlacklistedRanges from "./get_blacklisted_ranges";
 
-export type IStreamOrchestratorClockTick = IPeriodStreamClockTick;
+export type IStreamOrchestratorPlaybackObservation = IPeriodStreamPlaybackObservation;
 
 const { MAXIMUM_MAX_BUFFER_AHEAD,
         MAXIMUM_MAX_BUFFER_BEHIND } = config;
@@ -99,7 +100,7 @@ export type IStreamOrchestratorOptions =
  *   - Emit various events to notify of its health and issues
  *
  * @param {Object} content
- * @param {Observable} clock$ - Emit position information
+ * @param {Observable} playbackObserver - Emit position information
  * @param {Object} abrManager - Emit bitrate estimates and best Representation
  * to play.
  * @param {Object} segmentBuffersStore - Will be used to lazily create
@@ -111,7 +112,7 @@ export type IStreamOrchestratorOptions =
 export default function StreamOrchestrator(
   content : { manifest : Manifest;
               initialPeriod : Period; },
-  clock$ : Observable<IStreamOrchestratorClockTick>,
+  playbackObserver : IReadOnlyPlaybackObserver<IStreamOrchestratorPlaybackObservation>,
   abrManager : ABRManager,
   segmentBuffersStore : SegmentBuffersStore,
   segmentFetcherCreator : SegmentFetcherCreator,
@@ -133,7 +134,8 @@ export default function StreamOrchestrator(
                                 Infinity;
       return BufferGarbageCollector({
         segmentBuffer,
-        clock$: clock$.pipe(map(tick => tick.position + tick.wantedTimeOffset)),
+        currentTime$: playbackObserver.listen(true)
+          .pipe(map(o => o.position + o.wantedTimeOffset)),
         maxBufferBehind$: maxBufferBehind$.pipe(
           map(val => Math.min(val, defaultMaxBehind))),
         maxBufferAhead$: maxBufferAhead$.pipe(
@@ -143,8 +145,8 @@ export default function StreamOrchestrator(
 
   // trigger warnings when the wanted time is before or after the manifest's
   // segments
-  const outOfManifest$ = clock$.pipe(
-    filterMap<IStreamOrchestratorClockTick, IStreamWarningEvent, null>((
+  const outOfManifest$ = playbackObserver.listen(true).pipe(
+    filterMap<IStreamOrchestratorPlaybackObservation, IStreamWarningEvent, null>((
       { position, wantedTimeOffset }
     ) => {
       const offsetedPosition = wantedTimeOffset + position;
@@ -202,8 +204,8 @@ export default function StreamOrchestrator(
    * Manage creation and removal of Streams for every Periods for a given type.
    *
    * Works by creating consecutive Streams through the
-   * `manageConsecutivePeriodStreams` function, and restarting it when the clock
-   * goes out of the bounds of these Streams.
+   * `manageConsecutivePeriodStreams` function, and restarting it when the
+   * current position goes out of the bounds of these Streams.
    * @param {string} bufferType - e.g. "audio" or "video"
    * @param {Period} basePeriod - Initial Period downloaded.
    * @returns {Observable}
@@ -281,9 +283,9 @@ export default function StreamOrchestrator(
 
     // Restart the current Stream when the wanted time is in another period
     // than the ones already considered
-    const restartStreamsWhenOutOfBounds$ = clock$.pipe(
+    const restartStreamsWhenOutOfBounds$ = playbackObserver.listen(true).pipe(
       filterMap<
-        IStreamOrchestratorClockTick,
+        IStreamOrchestratorPlaybackObservation,
         Period,
         null
       >(({ position, wantedTimeOffset }) => {
@@ -340,13 +342,14 @@ export default function StreamOrchestrator(
         return observableConcat(
           ...rangesToClean.map(({ start, end }) =>
             segmentBuffer.removeBuffer(start, end).pipe(ignoreElements())),
-          clock$.pipe(take(1), mergeMap((lastTick) => {
+          observableDefer(() => {
+            const observation = playbackObserver.getLastObservation();
             return observableConcat(
-              observableOf(EVENTS.needsDecipherabilityFlush(lastTick.position,
-                                                            !lastTick.isPaused,
-                                                            lastTick.duration)),
+              observableOf(EVENTS.needsDecipherabilityFlush(observation.position,
+                                                            !observation.isPaused,
+                                                            observation.duration)),
               observableDefer(() => {
-                const lastPosition = lastTick.position + lastTick.wantedTimeOffset;
+                const lastPosition = observation.position + observation.wantedTimeOffset;
                 const newInitialPeriod = manifest.getPeriodForTime(lastPosition);
                 if (newInitialPeriod == null) {
                   throw new MediaError(
@@ -355,7 +358,7 @@ export default function StreamOrchestrator(
                 }
                 return launchConsecutiveStreamsForPeriod(newInitialPeriod);
               }));
-          })));
+          }));
       }));
 
     return observableMerge(restartStreamsWhenOutOfBounds$,
@@ -375,7 +378,7 @@ export default function StreamOrchestrator(
    * coming after it (from the last chronological one to the first).
    *
    * To clean-up PeriodStreams, each one of them are also automatically
-   * destroyed once the clock announces a time superior or equal to the end of
+   * destroyed once the current position is superior or equal to the end of
    * the concerned Period.
    *
    * A "periodStreamReady" event is sent each times a new PeriodStream is
@@ -405,7 +408,7 @@ export default function StreamOrchestrator(
     const destroyNextStreams$ = new Subject<void>();
 
     // Emits when the current position goes over the end of the current Stream.
-    const endOfCurrentStream$ = clock$
+    const endOfCurrentStream$ = playbackObserver.listen(true)
       .pipe(filter(({ position, wantedTimeOffset }) =>
         basePeriod.end != null &&
                     (position + wantedTimeOffset) >= basePeriod.end));
@@ -438,12 +441,12 @@ export default function StreamOrchestrator(
 
     const periodStream$ = PeriodStream({ abrManager,
                                          bufferType,
-                                         clock$,
                                          content: { manifest, period: basePeriod },
                                          garbageCollectors,
                                          segmentFetcherCreator,
                                          segmentBuffersStore,
                                          options,
+                                         playbackObserver,
                                          wantedBufferAhead$ }
     ).pipe(
       mergeMap((evt : IPeriodStreamEvent) : Observable<IMultiplePeriodStreamsEvent> => {

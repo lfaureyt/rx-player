@@ -14,13 +14,6 @@
  * limitations under the License.
  */
 
-/**
- * This file defines a global clock for the RxPlayer.
- *
- * Each clock tick also pass information about the current state of the
- * media element to sub-parts of the player.
- */
-
 import {
   defer as observableDefer,
   fromEvent as observableFromEvent,
@@ -31,7 +24,7 @@ import {
 import {
   map,
   mapTo,
-  shareReplay,
+  share,
   startWith,
 } from "rxjs/operators";
 import config from "../../config";
@@ -39,11 +32,180 @@ import log from "../../log";
 import objectAssign from "../../utils/object_assign";
 import { getRange } from "../../utils/ranges";
 
-/** "Event" that triggered the clock tick. */
-export type IClockMediaEventType =
-  /** First clock tick automatically emitted. */
+const { SAMPLING_INTERVAL_MEDIASOURCE,
+        SAMPLING_INTERVAL_LOW_LATENCY,
+        SAMPLING_INTERVAL_NO_MEDIASOURCE,
+        RESUME_GAP_AFTER_SEEKING,
+        RESUME_GAP_AFTER_NOT_ENOUGH_DATA,
+        RESUME_GAP_AFTER_BUFFERING,
+        REBUFFERING_GAP,
+        MINIMUM_BUFFER_AMOUNT_BEFORE_FREEZING } = config;
+
+/**
+ * HTMLMediaElement Events for which playback observations are calculated and
+ * emitted.
+ * @type {Array.<string>}
+ */
+const SCANNED_MEDIA_ELEMENTS_EVENTS : IPlaybackObserverEventType[] = [ "canplay",
+                                                                       "play",
+                                                                       "seeking",
+                                                                       "seeked",
+                                                                       "loadedmetadata",
+                                                                       "ratechange" ];
+
+/**
+ * Class allowing to "observe" current playback conditions so the RxPlayer is
+ * then able to react upon them.
+ *
+ * This is a central class of the RxPlayer as many modules rely on the
+ * `PlaybackObserver` to know the current state of the media being played.
+ *
+ * You can use the PlaybackObserver to either get the last observation
+ * performed, get the current media state or subscribe to an Observable emitting
+ * regularly media conditions.
+ *
+ * @class {PlaybackObserver}
+ */
+export default class PlaybackObserver {
+
+  /** HTMLMediaElement which we want to observe. */
+  private _mediaElement : HTMLMediaElement;
+
+  /** If `true`, a `MediaSource` object is linked to `_mediaElement`. */
+  private _withMediaSource : boolean;
+
+  /**
+   * If `true`, we're playing in a low-latency mode, which might have an
+   * influence on some chosen interval values here.
+   */
+  private _lowLatencyMode : boolean;
+
+  /**
+   * The RxPlayer usually wants to differientate when a seek was sourced from
+   * the RxPlayer's internal logic vs when it was sourced from an outside
+   * application code.
+   *
+   * To implement this in the PlaybackObserver, we maintain this counter
+   * allowing to know when a "seeking" event received from a `HTMLMediaElement`
+   * was due to an "internal seek" or an external seek:
+   *   - This counter is incremented each time an "internal seek" (seek from the
+   *     inside of the RxPlayer has been performed.
+   *   - This counter is decremented each time we received a "seeking" event.
+   *
+   * This allows us to correctly characterize seeking events: if the counter is
+   * superior to `0`, it is probably due to an internal "seek".
+   */
+  private _internalSeekingEventsIncomingCounter : number;
+
+  /** Last playback observation made by the `PlaybackObserver`. */
+  private _lastObservation : IPlaybackObservation;
+
+  private _observation$ : Observable<IPlaybackObservation> | null;
+
+  /**
+   * @param {HTMLMediaElement} mediaElement
+   * @param {Object} options
+   */
+  constructor(mediaElement : HTMLMediaElement, options : IPlaybackObserverOptions) {
+    this._internalSeekingEventsIncomingCounter = 0;
+    this._mediaElement = mediaElement;
+    this._withMediaSource = options.withMediaSource;
+    this._lowLatencyMode = options.lowLatencyMode;
+    this._lastObservation = objectAssign(getMediaInfos(this._mediaElement, "init"),
+                                         { rebuffering: null,
+                                           freezing: null });
+    this._observation$ = null;
+  }
+
+  // XXX TODO Observation => Sample?
+  public getLastObservation() : IPlaybackObservation {
+    return this._lastObservation;
+  }
+
+  public getCurrentTime() : number {
+    return this._mediaElement.currentTime;
+  }
+
+  public setCurrentTime(time: number) : void {
+    this._internalSeekingEventsIncomingCounter += 1;
+    this._mediaElement.currentTime = time;
+  }
+
+  // XXX TODO Make hot?
+  public listen(includeLastObservation : boolean) : Observable<IPlaybackObservation> {
+    return observableDefer(() => {
+      let observation$ = this._observation$;
+      if (observation$ === null) {
+        observation$ = this._createObservationObservable().pipe(share());
+        this._observation$ = observation$;
+      }
+      return includeLastObservation ?
+        observation$.pipe(startWith(this.getLastObservation())) :
+        observation$;
+    });
+  }
+
+  private _createObservationObservable() : Observable<IPlaybackObservation> {
+    return observableDefer(() : Observable<IPlaybackObservation> => {
+      const getCurrentObservation = (
+        event : IPlaybackObserverEventType
+      ) : IPlaybackObservation => {
+        let tmpEvt: IPlaybackObserverEventType = event;
+        if (tmpEvt === "seeking" && this._internalSeekingEventsIncomingCounter > 0) {
+          tmpEvt = "internal-seeking";
+          this._internalSeekingEventsIncomingCounter -= 1;
+        }
+        const mediaTimings = getMediaInfos(this._mediaElement, tmpEvt);
+        const rebufferingStatus = getRebufferingStatus(
+          this._lastObservation,
+          mediaTimings,
+          { lowLatencyMode: this._lowLatencyMode,
+            withMediaSource: this._withMediaSource });
+
+        const freezingStatus = getFreezingStatus(this._lastObservation, mediaTimings);
+        const timings = objectAssign(
+          {},
+          { rebuffering: rebufferingStatus,
+            freezing: freezingStatus },
+          mediaTimings);
+        log.debug("API: current media element state", timings);
+        return timings;
+      };
+
+      const eventObs : Array< Observable< IPlaybackObserverEventType > > =
+        SCANNED_MEDIA_ELEMENTS_EVENTS.map((eventName) =>
+          observableFromEvent(this._mediaElement, eventName)
+            .pipe(mapTo(eventName)));
+
+      const interval = this._lowLatencyMode  ? SAMPLING_INTERVAL_LOW_LATENCY :
+                       this._withMediaSource ? SAMPLING_INTERVAL_MEDIASOURCE :
+                                               SAMPLING_INTERVAL_NO_MEDIASOURCE;
+
+      const interval$ : Observable<"timeupdate"> =
+        observableInterval(interval)
+          .pipe(mapTo("timeupdate"));
+
+      return observableMerge(interval$, ...eventObs).pipe(
+        map((event : IPlaybackObserverEventType) => {
+          const newObservation = getCurrentObservation(event);
+          if (log.getLevel() === "DEBUG") {
+            log.debug("API: current playback timeline:\n" +
+                      prettyPrintBuffered(newObservation.buffered,
+                                          newObservation.position),
+                      `\n${event}`);
+          }
+          this._lastObservation = newObservation;
+          return newObservation;
+        }));
+    });
+  }
+}
+
+/** "Event" that triggered the playback observation. */
+export type IPlaybackObserverEventType =
+  /** First playback observation automatically emitted. */
   "init" | // set once on first emit
-  /** Regularly emitted clock tick when no event happened in a long time. */
+  /** Regularly emitted playback observation when no event happened in a long time. */
   "timeupdate" |
   /** On the HTML5 event with the same name */
   "canplay" |
@@ -64,7 +226,7 @@ export type IClockMediaEventType =
   /** An internal seek happens */
   "internal-seeking";
 
-/** Information recuperated on the media element on each clock tick. */
+/** Information recuperated on the media element on each playback observation. */
 interface IMediaInfos {
   /** Gap between `currentTime` and the next position with un-buffered data. */
   bufferGap : number;
@@ -74,7 +236,10 @@ interface IMediaInfos {
   currentRange : { start : number;
                    end : number; } |
                  null;
-  /** `currentTime` (position) set on the media element at the time of the tick. */
+  /**
+   * `currentTime` (position) set on the media element at the time of the
+   * PlaybackObserver's measure.
+   */
   position : number;
   /** Current `duration` set on the media element. */
   duration : number;
@@ -88,8 +253,8 @@ interface IMediaInfos {
   readyState : number;
   /** Current `seeking` value on the mediaElement. */
   seeking : boolean;
-   /** Event that triggered this clock tick. */
-  event : IClockMediaEventType;
+   /** Event that triggered this playback observation. */
+  event : IPlaybackObserverEventType;
 }
 
 /**
@@ -97,8 +262,8 @@ interface IMediaInfos {
  * status.
  * "Rebuffering" is a status where the player has not enough buffer ahead to
  * play reliably.
- * The RxPlayer should pause playback when the clock indicates the rebuffering
- * status.
+ * The RxPlayer should pause playback when a playback observation indicates the
+ * rebuffering status.
  */
 export interface IRebufferingStatus {
   /** What started the player to rebuffer. */
@@ -125,8 +290,8 @@ export interface IFreezingStatus {
   timestamp : number;
 }
 
-/** Information emitted on each clock tick. */
-export interface IClockTick extends IMediaInfos {
+/** Information emitted on each playback observation. */
+export interface IPlaybackObservation extends IMediaInfos {
   /**
    * Set if the player is short on audio and/or video media data and is a such,
    * rebuffering.
@@ -141,34 +306,7 @@ export interface IClockTick extends IMediaInfos {
    * `null` if the player is not frozen.
    */
   freezing : IFreezingStatus | null;
-  getCurrentTime : () => number;
 }
-
-/** Handle time relative information */
-export interface IClockHandler {
-  clock$: Observable<IClockTick>;
-  setCurrentTime: (time: number) => void;
-}
-
-const { SAMPLING_INTERVAL_MEDIASOURCE,
-        SAMPLING_INTERVAL_LOW_LATENCY,
-        SAMPLING_INTERVAL_NO_MEDIASOURCE,
-        RESUME_GAP_AFTER_SEEKING,
-        RESUME_GAP_AFTER_NOT_ENOUGH_DATA,
-        RESUME_GAP_AFTER_BUFFERING,
-        REBUFFERING_GAP,
-        MINIMUM_BUFFER_AMOUNT_BEFORE_FREEZING } = config;
-
-/**
- * HTMLMediaElement Events for which timings are calculated and emitted.
- * @type {Array.<string>}
- */
-const SCANNED_MEDIA_ELEMENTS_EVENTS : IClockMediaEventType[] = [ "canplay",
-                                                                 "play",
-                                                                 "seeking",
-                                                                 "seeked",
-                                                                 "loadedmetadata",
-                                                                 "ratechange" ];
 
 /**
  * Returns the amount of time in seconds the buffer should have ahead of the
@@ -220,15 +358,14 @@ function hasLoadedUntilTheEnd(
 }
 
 /**
- * Generate a basic timings object from the media element and the eventName
- * which triggered the request.
+ * Get basic playback information.
  * @param {HTMLMediaElement} mediaElement
  * @param {string} event
  * @returns {Object}
  */
 function getMediaInfos(
   mediaElement : HTMLMediaElement,
-  event : IClockMediaEventType
+  event : IPlaybackObserverEventType
 ) : IMediaInfos {
   const { buffered,
           currentTime,
@@ -259,19 +396,19 @@ function getMediaInfos(
 /**
  * Infer rebuffering status of the media based on:
  *   - the return of the function getMediaInfos
- *   - the previous timings object.
+ *   - the previous observation object.
  *
- * @param {Object} prevTimings - Previous timings object. See function to know
- * the different properties needed.
- * @param {Object} currentTimings - Current timings object. This does not need
- * to have every single infos, see function to know which properties are needed.
+ * @param {Object} prevObservation - Previous playback observation object.
+ * @param {Object} currentInfo - Current set of basic information on the
+ * `HTMLMediaElement`. This does not need every single property from a regular
+ * playback observation.
  * @param {Object} options
  * @returns {Object|null}
  */
 function getRebufferingStatus(
-  prevTimings : IClockTick,
-  currentTimings : IMediaInfos,
-  { withMediaSource, lowLatencyMode } : IClockOptions
+  prevObservation : IPlaybackObservation,
+  currentInfo : IMediaInfos,
+  { withMediaSource, lowLatencyMode } : IPlaybackObserverOptions
 ) : IRebufferingStatus | null {
   const { event: currentEvt,
           position: currentTime,
@@ -280,11 +417,11 @@ function getRebufferingStatus(
           duration,
           paused,
           readyState,
-          ended } = currentTimings;
+          ended } = currentInfo;
 
   const { rebuffering: prevRebuffering,
           event: prevEvt,
-          position: prevTime } = prevTimings;
+          position: prevTime } = prevObservation;
 
   const fullyLoaded = hasLoadedUntilTheEnd(currentRange, duration, lowLatencyMode);
 
@@ -350,11 +487,11 @@ function getRebufferingStatus(
     if (currentEvt === "seeking" ||
         prevRebuffering !== null && prevRebuffering.reason === "seeking") {
       reason = "seeking";
-    } else if (currentTimings.seeking &&
+    } else if (currentInfo.seeking &&
         ((currentEvt === "internal-seeking") ||
         (prevRebuffering !== null && prevRebuffering.reason === "internal-seek"))) {
       reason = "internal-seek";
-    } else if (currentTimings.seeking) {
+    } else if (currentInfo.seeking) {
       reason = "seeking";
     } else if (readyState === 1) {
       reason = "not-ready";
@@ -379,132 +516,40 @@ function getRebufferingStatus(
  *
  * Returns a corresponding `IFreezingStatus` object if that's the case and
  * `null` if not.
- * @param {Object} prevTimings
- * @param {Object} currentTimings
+ * @param {Object} prevObservation
+ * @param {Object} currentInfo
  * @returns {Object|null}
  */
 function getFreezingStatus(
-  prevTimings : IClockTick,
-  currentTimings : IMediaInfos
+  prevObservation : IPlaybackObservation,
+  currentInfo : IMediaInfos
 ) : IFreezingStatus | null {
-  if (prevTimings.freezing) {
-    if (currentTimings.ended ||
-        currentTimings.paused ||
-        currentTimings.readyState === 0 ||
-        currentTimings.playbackRate === 0 ||
-        prevTimings.position !== currentTimings.position)
+  if (prevObservation.freezing) {
+    if (currentInfo.ended ||
+        currentInfo.paused ||
+        currentInfo.readyState === 0 ||
+        currentInfo.playbackRate === 0 ||
+        prevObservation.position !== currentInfo.position)
     {
       return null; // Quit freezing status
     }
-    return prevTimings.freezing; // Stay in it
+    return prevObservation.freezing; // Stay in it
   }
 
-  return currentTimings.event === "timeupdate" &&
-         currentTimings.bufferGap > MINIMUM_BUFFER_AMOUNT_BEFORE_FREEZING &&
-         !currentTimings.ended &&
-         !currentTimings.paused &&
-         currentTimings.readyState >= 1 &&
-         currentTimings.playbackRate !== 0 &&
-         currentTimings.position === prevTimings.position ?
+  return currentInfo.event === "timeupdate" &&
+         currentInfo.bufferGap > MINIMUM_BUFFER_AMOUNT_BEFORE_FREEZING &&
+         !currentInfo.ended &&
+         !currentInfo.paused &&
+         currentInfo.readyState >= 1 &&
+         currentInfo.playbackRate !== 0 &&
+         currentInfo.position === prevObservation.position ?
            { timestamp: performance.now() } :
            null;
 }
 
-export interface IClockOptions {
+export interface IPlaybackObserverOptions {
   withMediaSource : boolean;
   lowLatencyMode : boolean;
-}
-
-/**
- * Timings observable.
- *
- * This Observable samples snapshots of player's current state:
- *   * time position
- *   * playback rate
- *   * current buffered range
- *   * gap with current buffered range ending
- *   * media duration
- *
- * In addition to sampling, this Observable also reacts to "seeking" and "play"
- * events.
- *
- * Observable is shared for performance reason: reduces the number of event
- * listeners and intervals/timeouts but also limit access to the media element
- * properties and gap calculations.
- *
- * The sampling is manual instead of based on "timeupdate" to reduce the
- * number of events.
- * @param {HTMLMediaElement} mediaElement
- * @param {Object} options
- * @returns {Observable}
- */
-function createClock(
-  mediaElement : HTMLMediaElement,
-  options : IClockOptions
-) : IClockHandler {
-  // Allow us to identify seek performed internally by the player.
-  let internalSeekingComingCounter = 0;
-  function setCurrentTime(time: number) {
-    mediaElement.currentTime = time;
-    internalSeekingComingCounter += 1;
-  }
-  const clock$ = observableDefer(() : Observable<IClockTick> => {
-    let lastTimings : IClockTick = objectAssign(
-      getMediaInfos(mediaElement, "init"),
-      { rebuffering: null,
-        freezing: null,
-        getCurrentTime: () => mediaElement.currentTime });
-
-    function getCurrentClockTick(event : IClockMediaEventType) : IClockTick {
-      let tmpEvt: IClockMediaEventType = event;
-      if (tmpEvt === "seeking" && internalSeekingComingCounter > 0) {
-        tmpEvt = "internal-seeking";
-        internalSeekingComingCounter -= 1;
-      }
-      const mediaTimings = getMediaInfos(mediaElement, tmpEvt);
-      const rebufferingStatus = getRebufferingStatus(lastTimings, mediaTimings, options);
-      const freezingStatus = getFreezingStatus(lastTimings, mediaTimings);
-      const timings = objectAssign({},
-                                   { rebuffering: rebufferingStatus,
-                                     freezing: freezingStatus,
-                                     getCurrentTime: () => mediaElement.currentTime },
-                                   mediaTimings);
-      log.debug("API: current media element state", timings);
-      return timings;
-    }
-
-    const eventObs : Array< Observable< IClockMediaEventType > > =
-      SCANNED_MEDIA_ELEMENTS_EVENTS.map((eventName) =>
-        observableFromEvent(mediaElement, eventName)
-          .pipe(mapTo(eventName)));
-
-    const interval = options.lowLatencyMode  ? SAMPLING_INTERVAL_LOW_LATENCY :
-                     options.withMediaSource ? SAMPLING_INTERVAL_MEDIASOURCE :
-                     SAMPLING_INTERVAL_NO_MEDIASOURCE;
-
-    const interval$ : Observable<"timeupdate"> =
-      observableInterval(interval)
-        .pipe(mapTo("timeupdate"));
-
-    return observableMerge(interval$, ...eventObs)
-      .pipe(
-        map((event : IClockMediaEventType) => {
-          lastTimings = getCurrentClockTick(event);
-          if (log.getLevel() === "DEBUG") {
-            log.debug("API: current playback timeline:\n" +
-                      prettyPrintBuffered(lastTimings.buffered,
-                                          lastTimings.position),
-                      `\n${event}`);
-          }
-          return lastTimings;
-        }),
-
-        startWith(lastTimings));
-  }).pipe(
-    // Always emit the last tick when already subscribed
-    shareReplay({ bufferSize: 1, refCount: true }));
-
-  return { clock$, setCurrentTime };
 }
 
 /**
@@ -569,5 +614,3 @@ function prettyPrintBuffered(
   }
   return str + "\n" + currentTimeStr;
 }
-
-export default createClock;

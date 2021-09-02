@@ -17,11 +17,13 @@
 import { Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { Period } from "../../manifest";
+import { IReadOnlyPlaybackObserver } from "../init";
 import EVENTS from "./events_generators";
 import { INeedsMediaSourceReload } from "./types";
 
 /**
- * Regularly ask to reload the MediaSource on each `clock$` tick.
+ * Regularly ask to reload the MediaSource on each playback observation
+ * performed by the playback observer.
  *
  * If and only if the Period currently played corresponds to `Period`, applies
  * an offset to the reloaded position corresponding to `deltaPos`.
@@ -31,7 +33,7 @@ import { INeedsMediaSourceReload } from "./types";
  *
  * @param {Object} period - The Period linked to the Adaptation or
  * Representation that you want to switch to.
- * @param {Observable} clock$ - Observable emitting playback conditions.
+ * @param {Observable} playbackObserver - emit playback conditions.
  * Has to emit last playback conditions immediately on subscribe.
  * @param {number} deltaPos - If the concerned Period is playing at the time
  * this function is called, we will add this value, in seconds, to the current
@@ -42,22 +44,21 @@ import { INeedsMediaSourceReload } from "./types";
  */
 export default function reloadAfterSwitch(
   period : Period,
-  clock$ : Observable<{
-    getCurrentTime : () => number;
+  playbackObserver : IReadOnlyPlaybackObserver<{
     position : number;
     isPaused : boolean;
   }>,
   deltaPos : number
 ) : Observable<INeedsMediaSourceReload> {
-  return clock$.pipe(
-    map((tick) => {
-      const currentTime = tick.getCurrentTime();
+  return playbackObserver.listen(true).pipe(
+    map((observation) => {
+      const currentTime = playbackObserver.getCurrentTime();
       if (currentTime < period.start ||
           (period.end !== undefined && currentTime > period.end))
       {
         // The Period was not playing, ask to reload to the same position we're
         // currently at
-        return EVENTS.needsMediaSourceReload(period, currentTime, !tick.isPaused);
+        return EVENTS.needsMediaSourceReload(period, currentTime, !observation.isPaused);
       }
 
       // The Period was playing at the time of the switch, add `deltaPos`
@@ -66,6 +67,6 @@ export default function reloadAfterSwitch(
       // Bind to Period start and end
       const reloadAt = Math.min(Math.max(period.start, pos),
                                 period.end ?? Infinity);
-      return EVENTS.needsMediaSourceReload(period, reloadAt, !tick.isPaused);
+      return EVENTS.needsMediaSourceReload(period, reloadAt, !observation.isPaused);
     }));
 }
