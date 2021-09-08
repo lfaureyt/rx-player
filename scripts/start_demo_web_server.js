@@ -9,16 +9,28 @@
  * an HTTPS (only if a certificate and key have been generated) server to serve
  * it, on the port 8000 and 8443 respectively.
  *
- * You can run it as a script through `node run_full_demo.js`.
+ * You can run it as a script through `node start_demo_web_server.js`.
  * Be aware that this demo will be built again every time either one of the
  * full demo file or one of the library file is updated.
  */
 
 const path = require("path");
-const generateFullDemo = require("./generate_full_demo");
+const fastBuild = require("./fast_demo_build");
+const slowBuild = require("./generate_full_demo");
 const launchStaticServer = require("./launch_static_server");
 
-generateFullDemo({ watch: true });
+const shouldRunFastVersion = process.argv.includes("--fast") ||
+                             process.argv.includes("-f");
+
+if (shouldRunFastVersion) {
+  fastBuild({ watch: true,
+              minify: false,
+              production: false });
+} else {
+  slowBuild({ watch: true,
+              minify: false,
+              production: false });
+}
 
 launchStaticServer(path.join(__dirname, "../demo/full/"),
                    { certificatePath: path.join(__dirname, "../localhost.crt"),

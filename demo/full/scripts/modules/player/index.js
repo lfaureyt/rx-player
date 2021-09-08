@@ -6,7 +6,7 @@
  * application.
  */
 
-import RxPlayer from "rx-player";
+import RxPlayer from "../../../../../src/index.ts";
 import { linkPlayerEventsToState } from "./events.js";
 import { Subject } from "rxjs";
 import { takeUntil } from "rxjs/operators";
